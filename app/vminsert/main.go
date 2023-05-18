@@ -76,6 +76,8 @@ var (
 	storageNodes           = flagutil.NewArrayString("storageNode", "Comma-separated addresses of vmstorage nodes; usage: -storageNode=vmstorage-host1,...,vmstorage-hostN . "+
 		"Enterprise version of VictoriaMetrics supports automatic discovery of vmstorage addresses via dns+srv records. For example, -storageNode=dns+srv:vmstorage.addrs . "+
 		"See https://docs.victoriametrics.com/Cluster-VictoriaMetrics.html#automatic-vmstorage-discovery")
+	qpsCount   = flag.Int("qpsCount", 5, "Please enter the maximum number of requests")
+	deleteTime = flag.Int("deleteTime", 10, "Please enter the auto cull time")
 )
 
 var (
@@ -240,8 +242,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) bool {
 			logger.Errorf("Failed to parse IP: %s", err)
 			return false
 		}
-
-		if !ipLimiter.Allow(ip, 5, time.Second) {
+		if !ipLimiter.Allow(ip, *qpsCount, time.Second, time.Duration(*deleteTime)*time.Second) {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			logger.Errorf("Too Many Requests")
 			return false

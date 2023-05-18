@@ -23,11 +23,12 @@ type ClientQPSLimiter struct {
 	deleteTicker *time.Ticker  // 定时查看当前请求数是否为0
 }
 
-func NewClientQPSLimiter(maxQPS int, windowSize time.Duration) *ClientQPSLimiter {
+func NewClientQPSLimiter(maxQPS int, windowSize, deleteSize time.Duration) *ClientQPSLimiter {
 	return &ClientQPSLimiter{
-		maxQPS:      maxQPS,
-		windowSize:  windowSize,
-		resetTicker: time.NewTicker(windowSize),
+		maxQPS:       maxQPS,
+		windowSize:   windowSize,
+		resetTicker:  time.NewTicker(windowSize),
+		deleteTicker: time.NewTicker(deleteSize),
 	}
 }
 func (limiter *ClientQPSLimiter) Allow() bool {
@@ -51,11 +52,11 @@ func (limiter *ClientQPSLimiter) Start() {
 		}
 	}()
 }
-func (limiter *IPQPSLimiter) Allow(ip string, maxQPS int, windowSize time.Duration) bool {
-	limiterObj, _ := limiter.limiterMap.LoadOrStore(ip, NewClientQPSLimiter(maxQPS, windowSize))
+func (limiter *IPQPSLimiter) Allow(ip string, maxQPS int, windowSize, deleteSize time.Duration) bool {
+	limiterObj, _ := limiter.limiterMap.LoadOrStore(ip, NewClientQPSLimiter(maxQPS, windowSize, deleteSize))
 	clientLimiter := limiterObj.(*ClientQPSLimiter)
 	clientLimiter.Start()
-
+	limiter.DeleteMap(ip, clientLimiter)
 	return clientLimiter.Allow()
 }
 func (limiter *IPQPSLimiter) DeleteMap(ip string, clientLimiter *ClientQPSLimiter) {

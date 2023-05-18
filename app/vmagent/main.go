@@ -72,6 +72,8 @@ var (
 	dryRun        = flag.Bool("dryRun", false, "Whether to check config files without running vmagent. The following files are checked: "+
 		"-promscrape.config, -remoteWrite.relabelConfig, -remoteWrite.urlRelabelConfig, -remoteWrite.streamAggr.config . "+
 		"Unknown config entries aren't allowed in -promscrape.config by default. This can be changed by passing -promscrape.config.strictParse=false command-line flag")
+	deleteTime = flag.Int("deleteTime", 10, "Please enter the auto cull time")
+	qpsCount   = flag.Int("qpsCount", 5, "Please enter the maximum number of requests")
 )
 
 var (
@@ -266,7 +268,7 @@ func requestHandler(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 
-		if !ipLimiter.Allow(ip, 5, time.Second) {
+		if !ipLimiter.Allow(ip, *qpsCount, time.Second, time.Duration(*deleteTime)*time.Second) {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			logger.Errorf("Too Many Requests")
 			return false
@@ -472,7 +474,7 @@ func processMultitenantRequest(w http.ResponseWriter, r *http.Request, path stri
 			return false
 		}
 
-		if !ipLimiter.Allow(ip, 5, time.Second) {
+		if !ipLimiter.Allow(ip, *qpsCount, time.Second, time.Duration(*deleteTime)*time.Second) {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			logger.Errorf("Too Many Requests")
 			return false

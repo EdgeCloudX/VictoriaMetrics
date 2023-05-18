@@ -70,7 +70,7 @@ publish-vminsert-race:
 	APP_NAME=vminsert RACE=-race $(MAKE) publish-via-docker
 
 vminsert-linux-amd64:
-	APP_NAME=vminsert CGO_ENABLED=1 GOOS=linux GOARCH=amd64 $(MAKE) app-local-goos-goarch
+	APP_NAME=vminsert CGO_ENABLED=1 GOOS=linux GOARCH=amd64 $(MAKE) main.go
 
 vminsert-linux-arm:
 	APP_NAME=vminsert CGO_ENABLED=0 GOOS=linux GOARCH=arm $(MAKE) app-local-goos-goarch
