@@ -152,7 +152,6 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		var s Storage
 		s.currHourMetricIDs.Store(&hourMetricIDs{})
 		s.prevHourMetricIDs.Store(&hourMetricIDs{})
-		s.pendingHourEntries = &uint64set.Set{}
 		return &s
 	}
 	t.Run("empty_pending_metric_ids_stale_curr_hour", func(t *testing.T) {
@@ -171,7 +170,11 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		s.updateCurrHourMetricIDs(hour)
 		hmCurr := s.currHourMetricIDs.Load().(*hourMetricIDs)
 		if hmCurr.hour != hour {
-			t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			// It is possible new hour occurred. Update the hour and verify it again.
+			hour = uint64(timestampFromTime(time.Now())) / msecPerHour
+			if hmCurr.hour != hour {
+				t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			}
 		}
 		if hmCurr.m.Len() != 0 {
 			t.Fatalf("unexpected length of hm.m; got %d; want %d", hmCurr.m.Len(), 0)
@@ -182,8 +185,8 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmOrig)
 		}
 
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected len(s.pendingHourEntries); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 	t.Run("empty_pending_metric_ids_valid_curr_hour", func(t *testing.T) {
@@ -199,7 +202,13 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		s.updateCurrHourMetricIDs(hour)
 		hmCurr := s.currHourMetricIDs.Load().(*hourMetricIDs)
 		if hmCurr.hour != hour {
-			t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			// It is possible new hour occurred. Update the hour and verify it again.
+			hour = uint64(timestampFromTime(time.Now())) / msecPerHour
+			if hmCurr.hour != hour {
+				t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			}
+			// Do not run other checks, since they may fail.
+			return
 		}
 		if !reflect.DeepEqual(hmCurr, hmOrig) {
 			t.Fatalf("unexpected hmCurr; got %v; want %v", hmCurr, hmOrig)
@@ -210,18 +219,34 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		if !reflect.DeepEqual(hmPrev, hmEmpty) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmEmpty)
 		}
-
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected len(s.pendingHourEntries); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 	t.Run("nonempty_pending_metric_ids_stale_curr_hour", func(t *testing.T) {
 		s := newStorage()
-		pendingHourEntries := &uint64set.Set{}
-		pendingHourEntries.Add(343)
-		pendingHourEntries.Add(32424)
-		pendingHourEntries.Add(8293432)
-		s.pendingHourEntries = pendingHourEntries
+		s.pendingHourEntries = []pendingHourMetricIDEntry{
+			{AccountID: 123, ProjectID: 431, MetricID: 343},
+			{AccountID: 123, ProjectID: 431, MetricID: 32424},
+			{AccountID: 1, ProjectID: 2, MetricID: 8293432},
+		}
+		mExpected := &uint64set.Set{}
+		for _, e := range s.pendingHourEntries {
+			mExpected.Add(e.MetricID)
+		}
+		byTenantExpected := make(map[accountProjectKey]*uint64set.Set)
+		for _, e := range s.pendingHourEntries {
+			k := accountProjectKey{
+				AccountID: e.AccountID,
+				ProjectID: e.ProjectID,
+			}
+			x := byTenantExpected[k]
+			if x == nil {
+				x = &uint64set.Set{}
+				byTenantExpected[k] = x
+			}
+			x.Add(e.MetricID)
+		}
 
 		hour := fasttime.UnixHour()
 		if hour%24 == 0 {
@@ -237,28 +262,51 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		s.updateCurrHourMetricIDs(hour)
 		hmCurr := s.currHourMetricIDs.Load().(*hourMetricIDs)
 		if hmCurr.hour != hour {
-			t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			// It is possible new hour occurred. Update the hour and verify it again.
+			hour = uint64(timestampFromTime(time.Now())) / msecPerHour
+			if hmCurr.hour != hour {
+				t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			}
 		}
-		if !hmCurr.m.Equal(pendingHourEntries) {
-			t.Fatalf("unexpected hmCurr.m; got %v; want %v", hmCurr.m, pendingHourEntries)
+		if !hmCurr.m.Equal(mExpected) {
+			t.Fatalf("unexpected hm.m; got %v; want %v", hmCurr.m, mExpected)
+		}
+		if !reflect.DeepEqual(hmCurr.byTenant, byTenantExpected) {
+			t.Fatalf("unexpected hmPrev.byTenant; got %v; want %v", hmCurr.byTenant, byTenantExpected)
 		}
 
 		hmPrev := s.prevHourMetricIDs.Load().(*hourMetricIDs)
 		if !reflect.DeepEqual(hmPrev, hmOrig) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmOrig)
 		}
-
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected len(s.pendingHourEntries); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 	t.Run("nonempty_pending_metric_ids_valid_curr_hour", func(t *testing.T) {
 		s := newStorage()
-		pendingHourEntries := &uint64set.Set{}
-		pendingHourEntries.Add(343)
-		pendingHourEntries.Add(32424)
-		pendingHourEntries.Add(8293432)
-		s.pendingHourEntries = pendingHourEntries
+		s.pendingHourEntries = []pendingHourMetricIDEntry{
+			{AccountID: 123, ProjectID: 431, MetricID: 343},
+			{AccountID: 123, ProjectID: 431, MetricID: 32424},
+			{AccountID: 1, ProjectID: 2, MetricID: 8293432},
+		}
+		mExpected := &uint64set.Set{}
+		for _, e := range s.pendingHourEntries {
+			mExpected.Add(e.MetricID)
+		}
+		byTenantExpected := make(map[accountProjectKey]*uint64set.Set)
+		for _, e := range s.pendingHourEntries {
+			k := accountProjectKey{
+				AccountID: e.AccountID,
+				ProjectID: e.ProjectID,
+			}
+			x := byTenantExpected[k]
+			if x == nil {
+				x = &uint64set.Set{}
+				byTenantExpected[k] = x
+			}
+			x.Add(e.MetricID)
+		}
 
 		hour := fasttime.UnixHour()
 		hmOrig := &hourMetricIDs{
@@ -271,9 +319,15 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		s.updateCurrHourMetricIDs(hour)
 		hmCurr := s.currHourMetricIDs.Load().(*hourMetricIDs)
 		if hmCurr.hour != hour {
-			t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			// It is possible new hour occurred. Update the hour and verify it again.
+			hour = uint64(timestampFromTime(time.Now())) / msecPerHour
+			if hmCurr.hour != hour {
+				t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			}
+			// Do not run other checks, since they may fail.
+			return
 		}
-		m := pendingHourEntries.Clone()
+		m := mExpected.Clone()
 		hmOrig.m.ForEach(func(part []uint64) bool {
 			for _, metricID := range part {
 				m.Add(metricID)
@@ -283,24 +337,43 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		if !hmCurr.m.Equal(m) {
 			t.Fatalf("unexpected hm.m; got %v; want %v", hmCurr.m, m)
 		}
+		if !reflect.DeepEqual(hmCurr.byTenant, byTenantExpected) {
+			t.Fatalf("unexpected hmPrev.byTenant; got %v; want %v", hmCurr.byTenant, byTenantExpected)
+		}
 
 		hmPrev := s.prevHourMetricIDs.Load().(*hourMetricIDs)
 		hmEmpty := &hourMetricIDs{}
 		if !reflect.DeepEqual(hmPrev, hmEmpty) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmEmpty)
 		}
-
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 	t.Run("nonempty_pending_metric_ids_valid_curr_hour_start_of_day", func(t *testing.T) {
 		s := newStorage()
-		pendingHourEntries := &uint64set.Set{}
-		pendingHourEntries.Add(343)
-		pendingHourEntries.Add(32424)
-		pendingHourEntries.Add(8293432)
-		s.pendingHourEntries = pendingHourEntries
+		s.pendingHourEntries = []pendingHourMetricIDEntry{
+			{AccountID: 123, ProjectID: 431, MetricID: 343},
+			{AccountID: 123, ProjectID: 431, MetricID: 32424},
+			{AccountID: 1, ProjectID: 2, MetricID: 8293432},
+		}
+		mExpected := &uint64set.Set{}
+		for _, e := range s.pendingHourEntries {
+			mExpected.Add(e.MetricID)
+		}
+		byTenantExpected := make(map[accountProjectKey]*uint64set.Set)
+		for _, e := range s.pendingHourEntries {
+			k := accountProjectKey{
+				AccountID: e.AccountID,
+				ProjectID: e.ProjectID,
+			}
+			x := byTenantExpected[k]
+			if x == nil {
+				x = &uint64set.Set{}
+				byTenantExpected[k] = x
+			}
+			x.Add(e.MetricID)
+		}
 
 		hour := fasttime.UnixHour()
 		hour -= hour % 24
@@ -314,9 +387,15 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		s.updateCurrHourMetricIDs(hour)
 		hmCurr := s.currHourMetricIDs.Load().(*hourMetricIDs)
 		if hmCurr.hour != hour {
-			t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			// It is possible new hour occurred. Update the hour and verify it again.
+			hour = uint64(timestampFromTime(time.Now())) / msecPerHour
+			if hmCurr.hour != hour {
+				t.Fatalf("unexpected hmCurr.hour; got %d; want %d", hmCurr.hour, hour)
+			}
+			// Do not run other checks, since they may fail.
+			return
 		}
-		m := pendingHourEntries.Clone()
+		m := mExpected.Clone()
 		hmOrig.m.ForEach(func(part []uint64) bool {
 			for _, metricID := range part {
 				m.Add(metricID)
@@ -326,15 +405,17 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		if !hmCurr.m.Equal(m) {
 			t.Fatalf("unexpected hm.m; got %v; want %v", hmCurr.m, m)
 		}
+		if !reflect.DeepEqual(hmCurr.byTenant, byTenantExpected) {
+			t.Fatalf("unexpected hmPrev.byTenant; got %v; want %v", hmCurr.byTenant, byTenantExpected)
+		}
 
 		hmPrev := s.prevHourMetricIDs.Load().(*hourMetricIDs)
 		hmEmpty := &hourMetricIDs{}
 		if !reflect.DeepEqual(hmPrev, hmEmpty) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmEmpty)
 		}
-
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 	t.Run("nonempty_pending_metric_ids_from_previous_hour_new_day", func(t *testing.T) {
@@ -343,11 +424,11 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		hour := fasttime.UnixHour()
 		hour -= hour % 24
 
-		pendingHourEntries := &uint64set.Set{}
-		pendingHourEntries.Add(343)
-		pendingHourEntries.Add(32424)
-		pendingHourEntries.Add(8293432)
-		s.pendingHourEntries = pendingHourEntries
+		s.pendingHourEntries = []pendingHourMetricIDEntry{
+			{AccountID: 123, ProjectID: 431, MetricID: 343},
+			{AccountID: 123, ProjectID: 431, MetricID: 32424},
+			{AccountID: 1, ProjectID: 2, MetricID: 8293432},
+		}
 
 		hmOrig := &hourMetricIDs{
 			m:    &uint64set.Set{},
@@ -362,12 +443,16 @@ func TestUpdateCurrHourMetricIDs(t *testing.T) {
 		if hmCurr.m.Len() != 0 {
 			t.Fatalf("unexpected non-empty hmCurr.m; got %v", hmCurr.m.AppendTo(nil))
 		}
+		byTenantExpected := make(map[accountProjectKey]*uint64set.Set)
+		if !reflect.DeepEqual(hmCurr.byTenant, byTenantExpected) {
+			t.Fatalf("unexpected hmPrev.byTenant; got %v; want %v", hmCurr.byTenant, byTenantExpected)
+		}
 		hmPrev := s.prevHourMetricIDs.Load().(*hourMetricIDs)
 		if !reflect.DeepEqual(hmPrev, hmOrig) {
 			t.Fatalf("unexpected hmPrev; got %v; want %v", hmPrev, hmOrig)
 		}
-		if s.pendingHourEntries.Len() != 0 {
-			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", s.pendingHourEntries.Len(), 0)
+		if len(s.pendingHourEntries) != 0 {
+			t.Fatalf("unexpected s.pendingHourEntries.Len(); got %d; want %d", len(s.pendingHourEntries), 0)
 		}
 	})
 }
@@ -550,7 +635,7 @@ func TestStorageDeleteSeries(t *testing.T) {
 	s := MustOpenStorage(path, 0, 0, 0)
 
 	// Verify no label names exist
-	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, TimeRange{}, 1e5, 1e9, noDeadline)
+	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, 0, 0, nil, TimeRange{}, 1e5, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("error in SearchLabelNamesWithFiltersOnTimeRange() at the start: %s", err)
 	}
@@ -599,7 +684,7 @@ func TestStorageDeleteSeries(t *testing.T) {
 	})
 
 	// Verify no more tag keys exist
-	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, TimeRange{}, 1e5, 1e9, noDeadline)
+	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, 0, 0, nil, TimeRange{}, 1e5, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("error in SearchLabelNamesWithFiltersOnTimeRange after the test: %s", err)
 	}
@@ -619,12 +704,16 @@ func testStorageDeleteSeries(s *Storage, workerNum int) error {
 	const metricsCount = 30
 
 	workerTag := []byte(fmt.Sprintf("workerTag_%d", workerNum))
+	accountID := uint32(workerNum)
+	projectID := uint32(123)
 
 	lnsAll := make(map[string]bool)
 	lnsAll["__name__"] = true
 	for i := 0; i < metricsCount; i++ {
 		var mrs []MetricRow
 		var mn MetricName
+		mn.AccountID = accountID
+		mn.ProjectID = projectID
 		job := fmt.Sprintf("job_%d_%d", i, workerNum)
 		instance := fmt.Sprintf("instance_%d_%d", i, workerNum)
 		mn.Tags = []Tag{
@@ -656,7 +745,7 @@ func testStorageDeleteSeries(s *Storage, workerNum int) error {
 	s.DebugFlush()
 
 	// Verify tag values exist
-	tvs, err := s.SearchLabelValuesWithFiltersOnTimeRange(nil, string(workerTag), nil, TimeRange{}, 1e5, 1e9, noDeadline)
+	tvs, err := s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, string(workerTag), nil, TimeRange{}, 1e5, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange before metrics removal: %w", err)
 	}
@@ -665,7 +754,7 @@ func testStorageDeleteSeries(s *Storage, workerNum int) error {
 	}
 
 	// Verify tag keys exist
-	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, TimeRange{}, 1e5, 1e9, noDeadline)
+	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, nil, TimeRange{}, 1e5, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelNamesWithFiltersOnTimeRange before metrics removal: %w", err)
 	}
@@ -689,7 +778,7 @@ func testStorageDeleteSeries(s *Storage, workerNum int) error {
 		return n
 	}
 	for i := 0; i < metricsCount; i++ {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		if err := tfs.Add(nil, []byte("metric_.+"), false, true); err != nil {
 			return fmt.Errorf("cannot add regexp tag filter: %w", err)
 		}
@@ -722,14 +811,14 @@ func testStorageDeleteSeries(s *Storage, workerNum int) error {
 	}
 
 	// Make sure no more metrics left for the given workerNum
-	tfs := NewTagFilters()
+	tfs := NewTagFilters(accountID, projectID)
 	if err := tfs.Add(nil, []byte(fmt.Sprintf("metric_.+_%d", workerNum)), false, true); err != nil {
 		return fmt.Errorf("cannot add regexp tag filter for worker metrics: %w", err)
 	}
 	if n := metricBlocksCount(tfs); n != 0 {
 		return fmt.Errorf("expecting zero metric blocks after deleting all the metrics; got %d blocks", n)
 	}
-	tvs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, string(workerTag), nil, TimeRange{}, 1e5, 1e9, noDeadline)
+	tvs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, string(workerTag), nil, TimeRange{}, 1e5, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange after all the metrics are removed: %w", err)
 	}
@@ -800,6 +889,8 @@ func TestStorageRegisterMetricNamesConcurrent(t *testing.T) {
 func testStorageRegisterMetricNames(s *Storage) error {
 	const metricsPerAdd = 1e3
 	const addsCount = 10
+	const accountID = 123
+	const projectID = 421
 
 	addIDsMap := make(map[string]struct{})
 	for i := 0; i < addsCount; i++ {
@@ -807,6 +898,8 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		var mn MetricName
 		addID := fmt.Sprintf("%d", i)
 		addIDsMap[addID] = struct{}{}
+		mn.AccountID = accountID
+		mn.ProjectID = projectID
 		mn.Tags = []Tag{
 			{[]byte("job"), []byte("webservice")},
 			{[]byte("instance"), []byte("1.2.3.4")},
@@ -843,13 +936,22 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		"instance",
 		"job",
 	}
-	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, TimeRange{}, 100, 1e9, noDeadline)
+	lns, err := s.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, nil, TimeRange{}, 100, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelNamesWithFiltersOnTimeRange: %w", err)
 	}
 	sort.Strings(lns)
 	if !reflect.DeepEqual(lns, lnsExpected) {
 		return fmt.Errorf("unexpected label names returned from SearchLabelNamesWithFiltersOnTimeRange;\ngot\n%q\nwant\n%q", lns, lnsExpected)
+	}
+
+	// Verify that SearchLabelNamesWithFiltersOnTimeRange returns empty results for incorrect accountID, projectID
+	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID+1, projectID+1, nil, TimeRange{}, 100, 1e9, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchTagKeys for incorrect accountID, projectID: %w", err)
+	}
+	if len(lns) > 0 {
+		return fmt.Errorf("SearchTagKeys with incorrect accountID, projectID returns unexpected non-empty result:\n%q", lns)
 	}
 
 	// Verify that SearchLabelNamesWithFiltersOnTimeRange with the specified time range returns correct result.
@@ -860,7 +962,7 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		MinTimestamp: start,
 		MaxTimestamp: end,
 	}
-	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, tr, 100, 1e9, noDeadline)
+	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, nil, tr, 100, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelNamesWithFiltersOnTimeRange: %w", err)
 	}
@@ -869,18 +971,36 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		return fmt.Errorf("unexpected label names returned from SearchLabelNamesWithFiltersOnTimeRange;\ngot\n%q\nwant\n%q", lns, lnsExpected)
 	}
 
+	// Verify that SearchLabelNamesWithFiltersOnTimeRange with the specified time range returns empty results for incrorrect accountID, projectID
+	lns, err = s.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID+1, projectID+1, nil, tr, 100, 1e9, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchTagKeysOnTimeRange for incorrect accountID, projectID: %w", err)
+	}
+	if len(lns) > 0 {
+		return fmt.Errorf("SearchTagKeysOnTimeRange with incorrect accountID, projectID returns unexpected non-empty result:\n%q", lns)
+	}
+
 	// Verify that SearchLabelValuesWithFiltersOnTimeRange returns correct result.
-	addIDs, err := s.SearchLabelValuesWithFiltersOnTimeRange(nil, "add_id", nil, TimeRange{}, addsCount+100, 1e9, noDeadline)
+	addIDs, err := s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, "add_id", nil, TimeRange{}, addsCount+100, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange: %w", err)
 	}
 	sort.Strings(addIDs)
 	if !reflect.DeepEqual(addIDs, addIDsExpected) {
 		return fmt.Errorf("unexpected tag values returned from SearchLabelValuesWithFiltersOnTimeRange;\ngot\n%q\nwant\n%q", addIDs, addIDsExpected)
+	}
+
+	// Verify that SearchLabelValuesWithFiltersOnTimeRange return empty results for incorrect accountID, projectID
+	addIDs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID+1, projectID+1, "add_id", nil, TimeRange{}, addsCount+100, 1e9, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchTagValues for incorrect accountID, projectID: %w", err)
+	}
+	if len(addIDs) > 0 {
+		return fmt.Errorf("SearchTagValues with incorrect accountID, projectID returns unexpected non-empty result:\n%q", addIDs)
 	}
 
 	// Verify that SearchLabelValuesWithFiltersOnTimeRange with the specified time range returns correct result.
-	addIDs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, "add_id", nil, tr, addsCount+100, 1e9, noDeadline)
+	addIDs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, "add_id", nil, tr, addsCount+100, 1e9, noDeadline)
 	if err != nil {
 		return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange: %w", err)
 	}
@@ -889,8 +1009,17 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		return fmt.Errorf("unexpected tag values returned from SearchLabelValuesWithFiltersOnTimeRange;\ngot\n%q\nwant\n%q", addIDs, addIDsExpected)
 	}
 
+	// Verify that SearchLabelValuesWithFiltersOnTimeRange returns empty results for incorrect accountID, projectID
+	addIDs, err = s.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID+1, projectID+1, "addd_id", nil, tr, addsCount+100, 1e9, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange for incorrect accoundID, projectID: %w", err)
+	}
+	if len(addIDs) > 0 {
+		return fmt.Errorf("SearchLabelValuesWithFiltersOnTimeRange with incorrect accountID, projectID returns unexpected non-empty result:\n%q", addIDs)
+	}
+
 	// Verify that SearchMetricNames returns correct result.
-	tfs := NewTagFilters()
+	tfs := NewTagFilters(accountID, projectID)
 	if err := tfs.Add([]byte("add_id"), []byte("0"), false, false); err != nil {
 		return fmt.Errorf("unexpected error in TagFilters.Add: %w", err)
 	}
@@ -914,6 +1043,19 @@ func testStorageRegisterMetricNames(s *Storage) error {
 		if string(job) != "webservice" {
 			return fmt.Errorf("unexpected job for metricName #%d; got %q; want %q", i, job, "webservice")
 		}
+	}
+
+	// Verify that SearchMetricNames returns empty results for incorrect accountID, projectID
+	tfs = NewTagFilters(accountID+1, projectID+1)
+	if err := tfs.Add([]byte("add_id"), []byte("0"), false, false); err != nil {
+		return fmt.Errorf("unexpected error in TagFilters.Add: %w", err)
+	}
+	metricNames, err = s.SearchMetricNames(nil, []*TagFilters{tfs}, tr, metricsPerAdd*addsCount*100+100, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchMetricNames for incorrect accountID, projectID: %w", err)
+	}
+	if len(metricNames) > 0 {
+		return fmt.Errorf("SearchMetricNames with incorrect accountID, projectID returns unexpected non-empty result:\n%+v", metricNames)
 	}
 
 	return nil
@@ -968,6 +1110,8 @@ func testGenerateMetricRows(rng *rand.Rand, rows uint64, timestampMin, timestamp
 		{[]byte("instance"), []byte("1.2.3.4")},
 	}
 	for i := 0; i < int(rows); i++ {
+		mn.AccountID = uint32(rand.Intn(2))
+		mn.ProjectID = uint32(rand.Intn(3))
 		mn.MetricGroup = []byte(fmt.Sprintf("metric_%d", i))
 		metricNameRaw := mn.marshalRaw(nil)
 		timestamp := rng.Int63n(timestampMax-timestampMin) + timestampMin
@@ -1120,6 +1264,8 @@ func testStorageAddMetrics(s *Storage, workerNum int) error {
 		{[]byte("instance"), []byte("1.2.3.4")},
 	}
 	for i := 0; i < rowsCount; i++ {
+		mn.AccountID = 123
+		mn.ProjectID = uint32(i % 3)
 		mn.MetricGroup = []byte(fmt.Sprintf("metric_%d_%d", workerNum, rng.Intn(10)))
 		metricNameRaw := mn.marshalRaw(nil)
 		timestamp := rng.Int63n(1e10)

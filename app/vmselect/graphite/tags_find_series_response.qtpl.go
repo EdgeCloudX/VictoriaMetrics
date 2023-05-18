@@ -18,7 +18,7 @@ var (
 )
 
 //line app/vmselect/graphite/tags_find_series_response.qtpl:3
-func StreamTagsFindSeriesResponse(qw422016 *qt422016.Writer, paths []string) {
+func StreamTagsFindSeriesResponse(qw422016 *qt422016.Writer, isPartial bool, paths []string) {
 //line app/vmselect/graphite/tags_find_series_response.qtpl:3
 	qw422016.N().S(`[`)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:5
@@ -39,22 +39,22 @@ func StreamTagsFindSeriesResponse(qw422016 *qt422016.Writer, paths []string) {
 }
 
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
-func WriteTagsFindSeriesResponse(qq422016 qtio422016.Writer, paths []string) {
+func WriteTagsFindSeriesResponse(qq422016 qtio422016.Writer, isPartial bool, paths []string) {
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
 	qw422016 := qt422016.AcquireWriter(qq422016)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
-	StreamTagsFindSeriesResponse(qw422016, paths)
+	StreamTagsFindSeriesResponse(qw422016, isPartial, paths)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
 	qt422016.ReleaseWriter(qw422016)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
 }
 
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
-func TagsFindSeriesResponse(paths []string) string {
+func TagsFindSeriesResponse(isPartial bool, paths []string) string {
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
 	qb422016 := qt422016.AcquireByteBuffer()
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
-	WriteTagsFindSeriesResponse(qb422016, paths)
+	WriteTagsFindSeriesResponse(qb422016, isPartial, paths)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10
 	qs422016 := string(qb422016.B)
 //line app/vmselect/graphite/tags_find_series_response.qtpl:10

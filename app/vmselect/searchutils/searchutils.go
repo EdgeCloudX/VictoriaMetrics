@@ -19,6 +19,8 @@ var (
 	maxExportDuration        = flag.Duration("search.maxExportDuration", time.Hour*24*30, "The maximum duration for /api/v1/export call")
 	maxQueryDuration         = flag.Duration("search.maxQueryDuration", time.Second*30, "The maximum duration for query execution")
 	maxStatusRequestDuration = flag.Duration("search.maxStatusRequestDuration", time.Minute*5, "The maximum duration for /api/v1/status/* requests")
+	denyPartialResponse      = flag.Bool("search.denyPartialResponse", false, "Whether to deny partial responses if a part of -storageNode instances fail to perform queries; "+
+		"this trades availability over consistency; see also -search.maxQueryDuration")
 )
 
 func roundToSeconds(ms int64) int64 {
@@ -162,6 +164,17 @@ func GetBool(r *http.Request, argKey string) bool {
 	}
 }
 
+// GetDenyPartialResponse returns whether partial responses are denied.
+func GetDenyPartialResponse(r *http.Request) bool {
+	if *denyPartialResponse {
+		return true
+	}
+	if r == nil {
+		return false
+	}
+	return GetBool(r, "deny_partial_response")
+}
+
 // Deadline contains deadline with the corresponding timeout for pretty error messages.
 type Deadline struct {
 	deadline uint64
@@ -180,6 +193,13 @@ func NewDeadline(startTime time.Time, timeout time.Duration, flagHint string) De
 		timeout:  timeout,
 		flagHint: flagHint,
 	}
+}
+
+// DeadlineFromTimestamp returns deadline from the given timestamp in seconds.
+func DeadlineFromTimestamp(timestamp uint64) Deadline {
+	startTime := time.Now()
+	timeout := time.Unix(int64(timestamp), 0).Sub(startTime)
+	return NewDeadline(startTime, timeout, "")
 }
 
 // Exceeded returns true if deadline is exceeded.

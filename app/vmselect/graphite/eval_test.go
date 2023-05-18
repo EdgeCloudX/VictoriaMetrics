@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/graphiteql"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 )
 
 func TestExecExprSuccess(t *testing.T) {
 	ec := &evalConfig{
+		at:          &auth.Token{},
 		startTime:   120e3,
 		endTime:     210e3,
 		storageStep: 30e3,
@@ -3324,6 +3326,7 @@ func TestExecExprFailure(t *testing.T) {
 	f := func(query string) {
 		t.Helper()
 		ec := &evalConfig{
+			at:          &auth.Token{},
 			startTime:   120e3,
 			endTime:     420e3,
 			storageStep: 60e3,

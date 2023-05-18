@@ -9,7 +9,9 @@ import (
 func TestConvertToCompositeTagFilters(t *testing.T) {
 	f := func(tfs []TagFilter, resultExpected [][]TagFilter) {
 		t.Helper()
-		tfsCompiled := NewTagFilters()
+		accountID := uint32(123)
+		projectID := uint32(456)
+		tfsCompiled := NewTagFilters(accountID, projectID)
 		for _, tf := range tfs {
 			if err := tfsCompiled.Add(tf.Key, tf.Value, tf.IsNegative, tf.IsRegexp); err != nil {
 				t.Fatalf("cannot add tf=%s: %s", tf.String(), err)
@@ -18,6 +20,12 @@ func TestConvertToCompositeTagFilters(t *testing.T) {
 		resultsCompiled := convertToCompositeTagFilterss([]*TagFilters{tfsCompiled})
 		result := make([][]TagFilter, len(resultsCompiled))
 		for i, resultCompiled := range resultsCompiled {
+			if resultCompiled.accountID != accountID {
+				t.Fatalf("unexpected accountID; got %d; want %d", resultCompiled.accountID, accountID)
+			}
+			if resultCompiled.projectID != projectID {
+				t.Fatalf("unexpected projectID; got %d; want %d", resultCompiled.projectID, projectID)
+			}
 			tfs := make([]TagFilter, len(resultCompiled.tfs))
 			for i, tf := range resultCompiled.tfs {
 				tfs[i] = TagFilter{
@@ -1202,7 +1210,7 @@ func TestSimplifyRegexp(t *testing.T) {
 }
 
 func TestTagFiltersString(t *testing.T) {
-	tfs := NewTagFilters()
+	tfs := NewTagFilters(12, 34)
 	mustAdd := func(key, value string, isNegative, isRegexp bool) {
 		t.Helper()
 		if err := tfs.Add([]byte(key), []byte(value), isNegative, isRegexp); err != nil {
@@ -1215,14 +1223,14 @@ func TestTagFiltersString(t *testing.T) {
 	mustAdd("tag_n", "n_value", true, false)
 	mustAdd("tag_re_graphite", "foo\\.bar", false, true)
 	s := tfs.String()
-	sExpected := `{__name__="metric_name",tag_re=~"re.value",tag_nre!~"nre.value",tag_n!="n_value",tag_re_graphite="foo.bar"}`
+	sExpected := `{AccountID=12,ProjectID=34,__name__="metric_name",tag_re=~"re.value",tag_nre!~"nre.value",tag_n!="n_value",tag_re_graphite="foo.bar"}`
 	if s != sExpected {
 		t.Fatalf("unexpected TagFilters.String(); got %q; want %q", s, sExpected)
 	}
 }
 
 func TestTagFiltersAddEmpty(t *testing.T) {
-	tfs := NewTagFilters()
+	tfs := NewTagFilters(0, 0)
 
 	mustAdd := func(key, value []byte, isNegative, isRegexp bool) {
 		t.Helper()
@@ -1256,7 +1264,7 @@ func TestTagFiltersAddEmpty(t *testing.T) {
 	expectTagFilter(2, ".+", false, true)
 
 	// Empty regexp filters
-	tfs.Reset()
+	tfs.Reset(0, 0)
 	mustAdd([]byte("foo"), []byte(".*"), false, true)
 	if len(tfs.tfs) != 0 {
 		t.Fatalf("unexpectedly added empty regexp filter %s", &tfs.tfs[0])
@@ -1267,7 +1275,7 @@ func TestTagFiltersAddEmpty(t *testing.T) {
 	expectTagFilter(1, "foo||bar", false, true)
 
 	// Verify that other filters are added normally.
-	tfs.Reset()
+	tfs.Reset(0, 0)
 	mustAdd(nil, []byte("foobar"), false, false)
 	if len(tfs.tfs) != 1 {
 		t.Fatalf("missing added filter")

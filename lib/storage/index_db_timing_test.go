@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -53,12 +54,15 @@ func BenchmarkIndexDBAddTSIDs(b *testing.B) {
 		}
 	}()
 
+	var goroutineID uint32
+
 	b.ReportAllocs()
 	b.SetBytes(recordsPerLoop)
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		var mn MetricName
 		var genTSID generationTSID
+		mn.AccountID = atomic.AddUint32(&goroutineID, 1)
 
 		// The most common tags.
 		mn.Tags = []Tag{
@@ -82,7 +86,7 @@ func BenchmarkIndexDBAddTSIDs(b *testing.B) {
 func benchmarkIndexDBAddTSIDs(db *indexDB, genTSID *generationTSID, mn *MetricName, startOffset, recordsPerLoop int) {
 	var metricName []byte
 	var metricNameRaw []byte
-	is := db.getIndexSearch(noDeadline)
+	is := db.getIndexSearch(0, 0, noDeadline)
 	defer db.putIndexSearch(is)
 	for i := 0; i < recordsPerLoop; i++ {
 		mn.MetricGroup = strconv.AppendUint(mn.MetricGroup[:0], uint64(i+startOffset), 10)
@@ -115,11 +119,13 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 	}()
 
 	// Fill the db with data as in https://github.com/prometheus/prometheus/blob/23c0299d85bfeb5d9b59e994861553a25ca578e5/tsdb/head_bench_test.go#L66
+	const accountID = 34327843
+	const projectID = 893433
 	var mn MetricName
 	var metricName []byte
 	var metricNameRaw []byte
 	var tsid TSID
-	is := db.getIndexSearch(noDeadline)
+	is := db.getIndexSearch(0, 0, noDeadline)
 	defer db.putIndexSearch(is)
 	addSeries := func(kvs ...string) {
 		mn.Reset()
@@ -127,6 +133,8 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 			mn.AddTag(kvs[i], kvs[i+1])
 		}
 		mn.sortTags()
+		mn.AccountID = accountID
+		mn.ProjectID = projectID
 		metricName = mn.Marshal(metricName[:0])
 		metricNameRaw = mn.marshalRaw(metricNameRaw[:0])
 		if err := is.createTSIDByMetricName(&tsid, metricName, metricNameRaw, 0); err != nil {
@@ -151,7 +159,7 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 	b.ResetTimer()
 
 	benchSearch := func(b *testing.B, tfs *TagFilters, expectedMetricIDs int) {
-		is := db.getIndexSearch(noDeadline)
+		is := db.getIndexSearch(tfs.accountID, tfs.projectID, noDeadline)
 		defer db.putIndexSearch(is)
 		tfss := []*TagFilters{tfs}
 		tr := TimeRange{
@@ -175,57 +183,57 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 	}
 
 	b.Run(`n="1"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		benchSearch(b, tfs, 2e5)
 	})
 	b.Run(`n="1",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "j", "foo", false, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`j="foo",n="1"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "j", "foo", false, false)
 		addTagFilter(tfs, "n", "1", false, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`n="1",j!="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "j", "foo", true, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`i=~".*"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "i", ".*", false, true)
 		benchSearch(b, tfs, 0)
 	})
 	b.Run(`i=~".+"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "i", ".+", false, true)
 		benchSearch(b, tfs, 5e6)
 	})
 	b.Run(`i=~""`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "i", "", false, true)
 		benchSearch(b, tfs, 0)
 	})
 	b.Run(`i!=""`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "i", "", true, false)
 		benchSearch(b, tfs, 5e6)
 	})
 	b.Run(`n="1",i=~".*",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", ".*", false, true)
 		addTagFilter(tfs, "j", "foo", false, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`n="1",i=~".*",i!="2",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", ".*", false, true)
 		addTagFilter(tfs, "i", "2", true, false)
@@ -233,34 +241,34 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 		benchSearch(b, tfs, 1e5-1)
 	})
 	b.Run(`n="1",i!=""`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", "", true, false)
 		benchSearch(b, tfs, 2e5)
 	})
 	b.Run(`n="1",i!="",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", "", true, false)
 		addTagFilter(tfs, "j", "foo", false, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`n="1",i=~".+",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", ".+", false, true)
 		addTagFilter(tfs, "j", "foo", false, false)
 		benchSearch(b, tfs, 1e5)
 	})
 	b.Run(`n="1",i=~"1.+",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", "1.+", false, true)
 		addTagFilter(tfs, "j", "foo", false, false)
 		benchSearch(b, tfs, 11110)
 	})
 	b.Run(`n="1",i=~".+",i!="2",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", ".+", false, true)
 		addTagFilter(tfs, "i", "2", true, false)
@@ -268,7 +276,7 @@ func BenchmarkHeadPostingForMatchers(b *testing.B) {
 		benchSearch(b, tfs, 1e5-1)
 	})
 	b.Run(`n="1",i=~".+",i!~"2.*",j="foo"`, func(b *testing.B) {
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(accountID, projectID)
 		addTagFilter(tfs, "n", "1", false, false)
 		addTagFilter(tfs, "i", ".+", false, true)
 		addTagFilter(tfs, "i", "2.*", true, true)
@@ -292,6 +300,8 @@ func BenchmarkIndexDBGetTSIDs(b *testing.B) {
 	}()
 
 	const recordsPerLoop = 1000
+	const accountsCount = 111
+	const projectsCount = 33333
 	const recordsCount = 1e5
 
 	// Fill the db with recordsCount records.
@@ -306,9 +316,11 @@ func BenchmarkIndexDBGetTSIDs(b *testing.B) {
 	var metricName []byte
 	var metricNameRaw []byte
 
-	is := db.getIndexSearch(noDeadline)
+	is := db.getIndexSearch(0, 0, noDeadline)
 	defer db.putIndexSearch(is)
 	for i := 0; i < recordsCount; i++ {
+		mn.AccountID = uint32(i % accountsCount)
+		mn.ProjectID = uint32(i % projectsCount)
 		mn.sortTags()
 		metricName = mn.Marshal(metricName[:0])
 		metricNameRaw = mn.marshalRaw(metricName[:0])
@@ -325,10 +337,12 @@ func BenchmarkIndexDBGetTSIDs(b *testing.B) {
 		var metricNameLocal []byte
 		var metricNameLocalRaw []byte
 		mnLocal := mn
-		is := db.getIndexSearch(noDeadline)
+		is := db.getIndexSearch(0, 0, noDeadline)
 		defer db.putIndexSearch(is)
 		for pb.Next() {
 			for i := 0; i < recordsPerLoop; i++ {
+				mnLocal.AccountID = uint32(i % accountsCount)
+				mnLocal.ProjectID = uint32(i % projectsCount)
 				mnLocal.sortTags()
 				metricNameLocal = mnLocal.Marshal(metricNameLocal[:0])
 				metricNameLocalRaw = mnLocal.marshalRaw(metricNameLocalRaw[:0])

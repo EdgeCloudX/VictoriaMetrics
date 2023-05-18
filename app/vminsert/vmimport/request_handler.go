@@ -2,72 +2,71 @@ package vmimport
 
 import (
 	"net/http"
-	"sync"
 
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/common"
+	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
-	"github.com/VictoriaMetrics/VictoriaMetrics/lib/cgroup"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompbmarshal"
 	parserCommon "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/common"
 	parser "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/vmimport"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/vmimport/stream"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/tenantmetrics"
 	"github.com/VictoriaMetrics/metrics"
 )
 
 var (
-	rowsInserted  = metrics.NewCounter(`vm_rows_inserted_total{type="vmimport"}`)
-	rowsPerInsert = metrics.NewHistogram(`vm_rows_per_insert{type="vmimport"}`)
+	rowsInserted       = metrics.NewCounter(`vm_rows_inserted_total{type="vmimport"}`)
+	rowsTenantInserted = tenantmetrics.NewCounterMap(`vm_tenant_inserted_rows_total{type="vmimport"}`)
+	rowsPerInsert      = metrics.NewHistogram(`vm_rows_per_insert{type="vmimport"}`)
 )
 
 // InsertHandler processes `/api/v1/import` request.
 //
 // See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/6
-func InsertHandler(req *http.Request) error {
+func InsertHandler(at *auth.Token, req *http.Request) error {
 	extraLabels, err := parserCommon.GetExtraLabels(req)
 	if err != nil {
 		return err
 	}
 	isGzipped := req.Header.Get("Content-Encoding") == "gzip"
 	return stream.Parse(req.Body, isGzipped, func(rows []parser.Row) error {
-		return insertRows(rows, extraLabels)
+		return insertRows(at, rows, extraLabels)
 	})
 }
 
-func insertRows(rows []parser.Row, extraLabels []prompbmarshal.Label) error {
-	ctx := getPushCtx()
-	defer putPushCtx(ctx)
+func insertRows(at *auth.Token, rows []parser.Row, extraLabels []prompbmarshal.Label) error {
+	ctx := netstorage.GetInsertCtx()
+	defer netstorage.PutInsertCtx(ctx)
 
-	rowsLen := 0
-	for i := range rows {
-		rowsLen += len(rows[i].Values)
-	}
-	ic := &ctx.Common
-	ic.Reset(rowsLen)
+	ctx.Reset() // This line is required for initializing ctx internals.
 	rowsTotal := 0
+	perTenantRows := make(map[auth.Token]int)
 	hasRelabeling := relabel.HasRelabeling()
 	for i := range rows {
 		r := &rows[i]
 		rowsTotal += len(r.Values)
-		ic.Labels = ic.Labels[:0]
+		ctx.Labels = ctx.Labels[:0]
 		for j := range r.Tags {
 			tag := &r.Tags[j]
-			ic.AddLabelBytes(tag.Key, tag.Value)
+			ctx.AddLabelBytes(tag.Key, tag.Value)
 		}
 		for j := range extraLabels {
 			label := &extraLabels[j]
-			ic.AddLabel(label.Name, label.Value)
+			ctx.AddLabel(label.Name, label.Value)
 		}
 		if hasRelabeling {
-			ic.ApplyRelabeling()
+			ctx.ApplyRelabeling()
 		}
-		if len(ic.Labels) == 0 {
+		if len(ctx.Labels) == 0 {
 			// Skip metric without labels.
 			continue
 		}
-		ic.SortLabelsIfNeeded()
-		ctx.metricNameBuf = storage.MarshalMetricNameRaw(ctx.metricNameBuf[:0], ic.Labels)
+		ctx.SortLabelsIfNeeded()
+		atLocal := ctx.GetLocalAuthToken(at)
+		ctx.MetricNameBuf = storage.MarshalMetricNameRaw(ctx.MetricNameBuf[:0], atLocal.AccountID, atLocal.ProjectID, ctx.Labels)
+		storageNodeIdx := ctx.GetStorageNodeIdx(atLocal, ctx.Labels)
 		values := r.Values
 		timestamps := r.Timestamps
 		if len(timestamps) != len(values) {
@@ -75,46 +74,14 @@ func insertRows(rows []parser.Row, extraLabels []prompbmarshal.Label) error {
 		}
 		for j, value := range values {
 			timestamp := timestamps[j]
-			if err := ic.WriteDataPoint(ctx.metricNameBuf, nil, timestamp, value); err != nil {
+			if err := ctx.WriteDataPointExt(storageNodeIdx, ctx.MetricNameBuf, timestamp, value); err != nil {
 				return err
 			}
 		}
+		perTenantRows[*atLocal] += len(r.Values)
 	}
 	rowsInserted.Add(rowsTotal)
+	rowsTenantInserted.MultiAdd(perTenantRows)
 	rowsPerInsert.Update(float64(rowsTotal))
-	return ic.FlushBufs()
+	return ctx.FlushBufs()
 }
-
-type pushCtx struct {
-	Common        common.InsertCtx
-	metricNameBuf []byte
-}
-
-func (ctx *pushCtx) reset() {
-	ctx.Common.Reset(0)
-	ctx.metricNameBuf = ctx.metricNameBuf[:0]
-}
-
-func getPushCtx() *pushCtx {
-	select {
-	case ctx := <-pushCtxPoolCh:
-		return ctx
-	default:
-		if v := pushCtxPool.Get(); v != nil {
-			return v.(*pushCtx)
-		}
-		return &pushCtx{}
-	}
-}
-
-func putPushCtx(ctx *pushCtx) {
-	ctx.reset()
-	select {
-	case pushCtxPoolCh <- ctx:
-	default:
-		pushCtxPool.Put(ctx)
-	}
-}
-
-var pushCtxPool sync.Pool
-var pushCtxPoolCh = make(chan *pushCtx, cgroup.AvailableCPUs())

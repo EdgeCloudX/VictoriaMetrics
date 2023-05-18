@@ -11,7 +11,7 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/bufferedwriter"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/searchutils"
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmstorage"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 	graphiteparser "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/graphite"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
@@ -21,7 +21,7 @@ import (
 // TagsDelSeriesHandler implements /tags/delSeries handler.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#removing-series-from-the-tagdb
-func TagsDelSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func TagsDelSeriesHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	paths := r.Form["path"]
 	totalDeleted := 0
@@ -50,7 +50,7 @@ func TagsDelSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 			})
 		}
 		tfss := joinTagFilterss(tfs, etfs)
-		sq := storage.NewSearchQuery(0, ct, tfss, 0)
+		sq := storage.NewSearchQuery(at.AccountID, at.ProjectID, 0, ct, tfss, 0)
 		n, err := netstorage.DeleteSeries(nil, sq, deadline)
 		if err != nil {
 			return fmt.Errorf("cannot delete series for %q: %w", sq, err)
@@ -70,20 +70,19 @@ func TagsDelSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 // TagsTagSeriesHandler implements /tags/tagSeries handler.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#adding-series-to-the-tagdb
-func TagsTagSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
-	return registerMetrics(startTime, w, r, false)
+func TagsTagSeriesHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
+	return registerMetrics(startTime, at, w, r, false)
 }
 
 // TagsTagMultiSeriesHandler implements /tags/tagMultiSeries handler.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#adding-series-to-the-tagdb
-func TagsTagMultiSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
-	return registerMetrics(startTime, w, r, true)
+func TagsTagMultiSeriesHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
+	return registerMetrics(startTime, at, w, r, true)
 }
 
-func registerMetrics(startTime time.Time, w http.ResponseWriter, r *http.Request, isJSONResponse bool) error {
+func registerMetrics(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request, isJSONResponse bool) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
-	_ = deadline // TODO: use the deadline as in the cluster branch
 	paths := r.Form["path"]
 	var row graphiteparser.Row
 	var labels []prompb.Label
@@ -126,10 +125,10 @@ func registerMetrics(startTime time.Time, w http.ResponseWriter, r *http.Request
 
 		// Put labels with the current timestamp to MetricRow
 		mr := &mrs[i]
-		mr.MetricNameRaw = storage.MarshalMetricNameRaw(mr.MetricNameRaw[:0], labels)
+		mr.MetricNameRaw = storage.MarshalMetricNameRaw(mr.MetricNameRaw[:0], at.AccountID, at.ProjectID, labels)
 		mr.Timestamp = ct
 	}
-	if err := vmstorage.RegisterMetricNames(nil, mrs); err != nil {
+	if err := netstorage.RegisterMetricNames(nil, mrs, deadline); err != nil {
 		return fmt.Errorf("cannot register paths: %w", err)
 	}
 
@@ -156,7 +155,7 @@ var (
 // TagsAutoCompleteValuesHandler implements /tags/autoComplete/values endpoint from Graphite Tags API.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#auto-complete-support
-func TagsAutoCompleteValuesHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func TagsAutoCompleteValuesHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	limit, err := searchutils.GetInt(r, "limit")
 	if err != nil {
@@ -173,29 +172,32 @@ func TagsAutoCompleteValuesHandler(startTime time.Time, w http.ResponseWriter, r
 	valuePrefix := r.FormValue("valuePrefix")
 	exprs := r.Form["expr"]
 	var tagValues []string
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
 	etfs, err := searchutils.GetExtraTagFilters(r)
 	if err != nil {
 		return fmt.Errorf("cannot setup tag filters: %w", err)
 	}
+	isPartial := false
 	if len(exprs) == 0 && len(etfs) == 0 {
 		// Fast path: there are no `expr` filters, so use netstorage.GraphiteTagValues.
 		// Escape special chars in tagPrefix as Graphite does.
 		// See https://github.com/graphite-project/graphite-web/blob/3ad279df5cb90b211953e39161df416e54a84948/webapp/graphite/tags/base.py#L228
 		filter := regexp.QuoteMeta(valuePrefix)
-		tagValues, err = netstorage.GraphiteTagValues(nil, tag, filter, limit, deadline)
+		tagValues, isPartial, err = netstorage.GraphiteTagValues(nil, at.AccountID, at.ProjectID, denyPartialResponse, tag, filter, limit, deadline)
 		if err != nil {
 			return err
 		}
 	} else {
 		// Slow path: use netstorage.SearchMetricNames for applying `expr` filters.
-		sq, err := getSearchQueryForExprs(startTime, etfs, exprs, limit*10)
+		sq, err := getSearchQueryForExprs(startTime, at, etfs, exprs, limit*10)
 		if err != nil {
 			return err
 		}
-		metricNames, err := netstorage.SearchMetricNames(nil, sq, deadline)
+		metricNames, isPartialResponse, err := netstorage.SearchMetricNames(nil, denyPartialResponse, sq, deadline)
 		if err != nil {
 			return fmt.Errorf("cannot fetch metric names for %q: %w", sq, err)
 		}
+		isPartial = isPartialResponse
 		m := make(map[string]struct{})
 		if tag == "name" {
 			tag = "__name__"
@@ -233,7 +235,7 @@ func TagsAutoCompleteValuesHandler(startTime time.Time, w http.ResponseWriter, r
 	w.Header().Set("Content-Type", contentType)
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteTagsAutoCompleteResponse(bw, tagValues, jsonp)
+	WriteTagsAutoCompleteResponse(bw, isPartial, tagValues, jsonp)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -246,7 +248,7 @@ var tagsAutoCompleteValuesDuration = metrics.NewSummary(`vm_request_duration_sec
 // TagsAutoCompleteTagsHandler implements /tags/autoComplete/tags endpoint from Graphite Tags API.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#auto-complete-support
-func TagsAutoCompleteTagsHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func TagsAutoCompleteTagsHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	limit, err := searchutils.GetInt(r, "limit")
 	if err != nil {
@@ -258,31 +260,34 @@ func TagsAutoCompleteTagsHandler(startTime time.Time, w http.ResponseWriter, r *
 	}
 	tagPrefix := r.FormValue("tagPrefix")
 	exprs := r.Form["expr"]
-	var labels []string
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
 	etfs, err := searchutils.GetExtraTagFilters(r)
 	if err != nil {
 		return fmt.Errorf("cannot setup tag filters: %w", err)
 	}
+	var labels []string
+	isPartial := false
 	if len(exprs) == 0 && len(etfs) == 0 {
 		// Fast path: there are no `expr` filters, so use netstorage.GraphiteTags.
 
 		// Escape special chars in tagPrefix as Graphite does.
 		// See https://github.com/graphite-project/graphite-web/blob/3ad279df5cb90b211953e39161df416e54a84948/webapp/graphite/tags/base.py#L181
 		filter := regexp.QuoteMeta(tagPrefix)
-		labels, err = netstorage.GraphiteTags(nil, filter, limit, deadline)
+		labels, isPartial, err = netstorage.GraphiteTags(nil, at.AccountID, at.ProjectID, denyPartialResponse, filter, limit, deadline)
 		if err != nil {
 			return err
 		}
 	} else {
 		// Slow path: use netstorage.SearchMetricNames for applying `expr` filters.
-		sq, err := getSearchQueryForExprs(startTime, etfs, exprs, limit*10)
+		sq, err := getSearchQueryForExprs(startTime, at, etfs, exprs, limit*10)
 		if err != nil {
 			return err
 		}
-		metricNames, err := netstorage.SearchMetricNames(nil, sq, deadline)
+		metricNames, isPartialResponse, err := netstorage.SearchMetricNames(nil, denyPartialResponse, sq, deadline)
 		if err != nil {
 			return fmt.Errorf("cannot fetch metric names for %q: %w", sq, err)
 		}
+		isPartial = isPartialResponse
 		m := make(map[string]struct{})
 		var mn storage.MetricName
 		for _, metricName := range metricNames {
@@ -316,7 +321,7 @@ func TagsAutoCompleteTagsHandler(startTime time.Time, w http.ResponseWriter, r *
 	w.Header().Set("Content-Type", contentType)
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteTagsAutoCompleteResponse(bw, labels, jsonp)
+	WriteTagsAutoCompleteResponse(bw, isPartial, labels, jsonp)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -329,7 +334,7 @@ var tagsAutoCompleteTagsDuration = metrics.NewSummary(`vm_request_duration_secon
 // TagsFindSeriesHandler implements /tags/findSeries endpoint from Graphite Tags API.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#exploring-tags
-func TagsFindSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func TagsFindSeriesHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	limit, err := searchutils.GetInt(r, "limit")
 	if err != nil {
@@ -343,11 +348,12 @@ func TagsFindSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.R
 	if err != nil {
 		return fmt.Errorf("cannot setup tag filters: %w", err)
 	}
-	sq, err := getSearchQueryForExprs(startTime, etfs, exprs, limit*10)
+	sq, err := getSearchQueryForExprs(startTime, at, etfs, exprs, limit*10)
 	if err != nil {
 		return err
 	}
-	metricNames, err := netstorage.SearchMetricNames(nil, sq, deadline)
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
+	metricNames, isPartial, err := netstorage.SearchMetricNames(nil, denyPartialResponse, sq, deadline)
 	if err != nil {
 		return fmt.Errorf("cannot fetch metric names for %q: %w", sq, err)
 	}
@@ -362,7 +368,7 @@ func TagsFindSeriesHandler(startTime time.Time, w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteTagsFindSeriesResponse(bw, paths)
+	WriteTagsFindSeriesResponse(bw, isPartial, paths)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -404,14 +410,15 @@ var tagsFindSeriesDuration = metrics.NewSummary(`vm_request_duration_seconds{pat
 // TagValuesHandler implements /tags/<tag_name> endpoint from Graphite Tags API.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#exploring-tags
-func TagValuesHandler(startTime time.Time, tagName string, w http.ResponseWriter, r *http.Request) error {
+func TagValuesHandler(startTime time.Time, at *auth.Token, tagName string, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	limit, err := searchutils.GetInt(r, "limit")
 	if err != nil {
 		return err
 	}
 	filter := r.FormValue("filter")
-	tagValues, err := netstorage.GraphiteTagValues(nil, tagName, filter, limit, deadline)
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
+	tagValues, isPartial, err := netstorage.GraphiteTagValues(nil, at.AccountID, at.ProjectID, denyPartialResponse, tagName, filter, limit, deadline)
 	if err != nil {
 		return err
 	}
@@ -419,7 +426,7 @@ func TagValuesHandler(startTime time.Time, tagName string, w http.ResponseWriter
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteTagValuesResponse(bw, tagName, tagValues)
+	WriteTagValuesResponse(bw, isPartial, tagName, tagValues)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -432,14 +439,15 @@ var tagValuesDuration = metrics.NewSummary(`vm_request_duration_seconds{path="/t
 // TagsHandler implements /tags endpoint from Graphite Tags API.
 //
 // See https://graphite.readthedocs.io/en/stable/tags.html#exploring-tags
-func TagsHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func TagsHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	limit, err := searchutils.GetInt(r, "limit")
 	if err != nil {
 		return err
 	}
 	filter := r.FormValue("filter")
-	labels, err := netstorage.GraphiteTags(nil, filter, limit, deadline)
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
+	labels, isPartial, err := netstorage.GraphiteTags(nil, at.AccountID, at.ProjectID, denyPartialResponse, filter, limit, deadline)
 	if err != nil {
 		return err
 	}
@@ -447,7 +455,7 @@ func TagsHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) er
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteTagsResponse(bw, labels)
+	WriteTagsResponse(bw, isPartial, labels)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -457,14 +465,14 @@ func TagsHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) er
 
 var tagsDuration = metrics.NewSummary(`vm_request_duration_seconds{path="/tags"}`)
 
-func getSearchQueryForExprs(startTime time.Time, etfs [][]storage.TagFilter, exprs []string, maxMetrics int) (*storage.SearchQuery, error) {
+func getSearchQueryForExprs(startTime time.Time, at *auth.Token, etfs [][]storage.TagFilter, exprs []string, maxMetrics int) (*storage.SearchQuery, error) {
 	tfs, err := exprsToTagFilters(exprs)
 	if err != nil {
 		return nil, err
 	}
 	ct := startTime.UnixNano() / 1e6
 	tfss := joinTagFilterss(tfs, etfs)
-	sq := storage.NewSearchQuery(0, ct, tfss, maxMetrics)
+	sq := storage.NewSearchQuery(at.AccountID, at.ProjectID, 0, ct, tfss, maxMetrics)
 	return sq, nil
 }
 

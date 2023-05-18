@@ -7,13 +7,14 @@
 {% stripspace %}
 QueryRangeResponse generates response for /api/v1/query_range.
 See https://prometheus.io/docs/prometheus/latest/querying/api/#range-queries
-{% func QueryRangeResponse(rs []netstorage.Result, qt *querytracer.Tracer, qtDone func(), qs *promql.QueryStats) %}
+{% func QueryRangeResponse(isPartial bool, rs []netstorage.Result, qt *querytracer.Tracer, qtDone func(), qs *promql.QueryStats) %}
 {
 	{% code
 		seriesCount := len(rs)
 		pointsCount := 0
 	%}
 	"status":"success",
+	"isPartial":{% if isPartial %}true{% else %}false{% endif %},
 	"data":{
 		"resultType":"matrix",
 		"result":[

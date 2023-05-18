@@ -2,9 +2,10 @@
 
 Tags generates response for /tags/<tag_name> handler
 See https://graphite.readthedocs.io/en/stable/tags.html#exploring-tags
-{% func TagValuesResponse(tagName string, tagValues []string) %}
+{% func TagValuesResponse(isPartial bool, tagName string, tagValues []string) %}
 {
 	"tag":{%q= tagName %},
+	{% if isPartial %}"is_partial":true,{% endif %}
 	"values":[
 	{% for i, value := range tagValues %}
 		{

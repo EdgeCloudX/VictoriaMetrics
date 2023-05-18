@@ -4,7 +4,9 @@ import (
 	"embed"
 	"flag"
 	"fmt"
+	"github.com/VictoriaMetrics/VictoriaMetrics/util"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -84,6 +86,7 @@ var (
 	staticFiles  embed.FS
 	staticServer = http.FileServer(http.FS(staticFiles))
 )
+var ipLimiter *util.IPQPSLimiter
 
 func main() {
 	// Write flags and help message to stdout, since it is easier to grep or pipe.
@@ -94,7 +97,7 @@ func main() {
 	buildinfo.Init()
 	logger.Init()
 	pushmetrics.Init()
-
+	ipLimiter = util.NewIPQPSLimiter()
 	if promscrape.IsDryRun() {
 		if err := promscrape.CheckConfig(); err != nil {
 			logger.Fatalf("error when checking -promscrape.config: %s", err)
@@ -257,6 +260,18 @@ func requestHandler(w http.ResponseWriter, r *http.Request) bool {
 	}
 	switch path {
 	case "/prometheus/api/v1/write", "/api/v1/write":
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			logger.Errorf("Failed to parse IP: %s", err)
+			return false
+		}
+
+		if !ipLimiter.Allow(ip, 5, time.Second) {
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			logger.Errorf("Too Many Requests")
+			return false
+		}
+
 		if common.HandleVMProtoServerHandshake(w, r) {
 			return true
 		}
@@ -451,6 +466,17 @@ func processMultitenantRequest(w http.ResponseWriter, r *http.Request, path stri
 	}
 	switch p.Suffix {
 	case "prometheus/", "prometheus", "prometheus/api/v1/write":
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			logger.Errorf("Failed to parse IP: %s", err)
+			return false
+		}
+
+		if !ipLimiter.Allow(ip, 5, time.Second) {
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			logger.Errorf("Too Many Requests")
+			return false
+		}
 		prometheusWriteRequests.Inc()
 		if err := promremotewrite.InsertHandler(at, r); err != nil {
 			prometheusWriteErrors.Inc()

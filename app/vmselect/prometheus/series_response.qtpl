@@ -6,15 +6,16 @@
 {% stripspace %}
 SeriesResponse generates response for /api/v1/series.
 See https://prometheus.io/docs/prometheus/latest/querying/api/#finding-series-by-label-matchers
-{% func SeriesResponse(metricNames []string, qt *querytracer.Tracer, qtDone func()) %}
+{% func SeriesResponse(isPartial bool, metricNames []string, qt *querytracer.Tracer, qtDone func()) %}
 {
 	"status":"success",
+	"isPartial":{% if isPartial %}true{% else %}false{% endif %},
 	"data":[
 		{% code var mn storage.MetricName %}
 		{% for i, metricName := range metricNames %}
 			{% code err := mn.UnmarshalString(metricName) %}
 			{% if err != nil %}
-				{%q= err.Error() %}
+				{%q= "cannot unmarshal metricName: " + err.Error() %}
 			{% else %}
 				{%= metricNameObject(&mn) %}
 			{% endif %}

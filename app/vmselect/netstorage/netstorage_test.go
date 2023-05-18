@@ -1,9 +1,36 @@
 package netstorage
 
 import (
+	"flag"
 	"reflect"
+	"runtime"
 	"testing"
 )
+
+func TestInitStopNodes(t *testing.T) {
+	if err := flag.Set("vmstorageDialTimeout", "1ms"); err != nil {
+		t.Fatalf("cannot set vmstorageDialTimeout flag: %s", err)
+	}
+	for i := 0; i < 3; i++ {
+		Init([]string{"host1", "host2"})
+		runtime.Gosched()
+		MustStop()
+	}
+
+	// Try initializing the netstorage with bigger number of nodes
+	for i := 0; i < 3; i++ {
+		Init([]string{"host1", "host2", "host3"})
+		runtime.Gosched()
+		MustStop()
+	}
+
+	// Try initializing the netstorage with smaller number of nodes
+	for i := 0; i < 3; i++ {
+		Init([]string{"host1"})
+		runtime.Gosched()
+		MustStop()
+	}
+}
 
 func TestMergeSortBlocks(t *testing.T) {
 	f := func(blocks []*sortBlock, dedupInterval int64, expectedResult *Result) {

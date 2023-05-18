@@ -13,6 +13,7 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/bufferedwriter"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/searchutils"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
 	"github.com/VictoriaMetrics/metrics"
@@ -24,7 +25,7 @@ var maxTagValueSuffixes = flag.Int("search.maxTagValueSuffixesPerSearch", 100e3,
 // MetricsFindHandler implements /metrics/find handler.
 //
 // See https://graphite-api.readthedocs.io/en/latest/api.html#metrics-find
-func MetricsFindHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func MetricsFindHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	format := r.FormValue("format")
 	if format == "" {
@@ -77,7 +78,8 @@ func MetricsFindHandler(startTime time.Time, w http.ResponseWriter, r *http.Requ
 		MinTimestamp: from,
 		MaxTimestamp: until,
 	}
-	paths, err := metricsFind(tr, label, "", query, delimiter[0], false, deadline)
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
+	paths, isPartial, err := metricsFind(at, denyPartialResponse, tr, label, "", query, delimiter[0], false, deadline)
 	if err != nil {
 		return err
 	}
@@ -90,7 +92,7 @@ func MetricsFindHandler(startTime time.Time, w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", contentType)
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteMetricsFindResponse(bw, paths, delimiter, format, wildcards, jsonp)
+	WriteMetricsFindResponse(bw, isPartial, paths, delimiter, format, wildcards, jsonp)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -118,7 +120,7 @@ func deduplicatePaths(paths []string, delimiter string) []string {
 // MetricsExpandHandler implements /metrics/expand handler.
 //
 // See https://graphite-api.readthedocs.io/en/latest/api.html#metrics-expand
-func MetricsExpandHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func MetricsExpandHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	queries := r.Form["query"]
 	if len(queries) == 0 {
@@ -152,10 +154,15 @@ func MetricsExpandHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 		MaxTimestamp: until,
 	}
 	m := make(map[string][]string, len(queries))
+	isPartialResponse := false
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
 	for _, query := range queries {
-		paths, err := metricsFind(tr, label, "", query, delimiter[0], true, deadline)
+		paths, isPartial, err := metricsFind(at, denyPartialResponse, tr, label, "", query, delimiter[0], true, deadline)
 		if err != nil {
 			return err
+		}
+		if isPartial {
+			isPartialResponse = true
 		}
 		if leavesOnly {
 			paths = filterLeaves(paths, delimiter)
@@ -168,7 +175,7 @@ func MetricsExpandHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 		for _, paths := range m {
 			sortPaths(paths, delimiter)
 		}
-		WriteMetricsExpandResponseByQuery(w, m, jsonp)
+		WriteMetricsExpandResponseByQuery(w, isPartialResponse, m, jsonp)
 		return nil
 	}
 	paths := m[queries[0]]
@@ -187,7 +194,7 @@ func MetricsExpandHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 	sortPaths(paths, delimiter)
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteMetricsExpandResponseFlat(bw, paths, jsonp)
+	WriteMetricsExpandResponseFlat(bw, isPartialResponse, paths, jsonp)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -198,11 +205,12 @@ func MetricsExpandHandler(startTime time.Time, w http.ResponseWriter, r *http.Re
 // MetricsIndexHandler implements /metrics/index.json handler.
 //
 // See https://graphite-api.readthedocs.io/en/latest/api.html#metrics-index-json
-func MetricsIndexHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func MetricsIndexHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	jsonp := r.FormValue("jsonp")
-	sq := storage.NewSearchQuery(0, 0, nil, 0)
-	metricNames, err := netstorage.LabelValues(nil, "__name__", sq, 0, deadline)
+	denyPartialResponse := searchutils.GetDenyPartialResponse(r)
+	sq := storage.NewSearchQuery(at.AccountID, at.ProjectID, 0, 0, nil, 0)
+	metricNames, isPartial, err := netstorage.LabelValues(nil, denyPartialResponse, "__name__", sq, 0, deadline)
 	if err != nil {
 		return fmt.Errorf(`cannot obtain metric names: %w`, err)
 	}
@@ -210,7 +218,7 @@ func MetricsIndexHandler(startTime time.Time, w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", contentType)
 	bw := bufferedwriter.Get(w)
 	defer bufferedwriter.Put(bw)
-	WriteMetricsIndexResponse(bw, metricNames, jsonp)
+	WriteMetricsIndexResponse(bw, isPartial, metricNames, jsonp)
 	if err := bw.Flush(); err != nil {
 		return err
 	}
@@ -219,19 +227,20 @@ func MetricsIndexHandler(startTime time.Time, w http.ResponseWriter, r *http.Req
 }
 
 // metricsFind searches for label values that match the given qHead and qTail.
-func metricsFind(tr storage.TimeRange, label, qHead, qTail string, delimiter byte, isExpand bool, deadline searchutils.Deadline) ([]string, error) {
+func metricsFind(at *auth.Token, denyPartialResponse bool, tr storage.TimeRange, label, qHead, qTail string, delimiter byte,
+	isExpand bool, deadline searchutils.Deadline) ([]string, bool, error) {
 	n := strings.IndexAny(qTail, "*{[")
 	if n < 0 {
 		query := qHead + qTail
-		suffixes, err := netstorage.TagValueSuffixes(nil, tr, label, query, delimiter, *maxTagValueSuffixes, deadline)
+		suffixes, isPartial, err := netstorage.TagValueSuffixes(nil, at.AccountID, at.ProjectID, denyPartialResponse, tr, label, query, delimiter, *maxTagValueSuffixes, deadline)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(suffixes) == 0 {
-			return nil, nil
+			return nil, false, nil
 		}
 		if len(query) > 0 && query[len(query)-1] == delimiter {
-			return []string{query}, nil
+			return []string{query}, isPartial, nil
 		}
 		results := make([]string, 0, len(suffixes))
 		for _, suffix := range suffixes {
@@ -239,27 +248,27 @@ func metricsFind(tr storage.TimeRange, label, qHead, qTail string, delimiter byt
 				results = append(results, query+suffix)
 			}
 		}
-		return results, nil
+		return results, isPartial, nil
 	}
 	if n == len(qTail)-1 && strings.HasSuffix(qTail, "*") {
 		query := qHead + qTail[:len(qTail)-1]
-		suffixes, err := netstorage.TagValueSuffixes(nil, tr, label, query, delimiter, *maxTagValueSuffixes, deadline)
+		suffixes, isPartial, err := netstorage.TagValueSuffixes(nil, at.AccountID, at.ProjectID, denyPartialResponse, tr, label, query, delimiter, *maxTagValueSuffixes, deadline)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if len(suffixes) == 0 {
-			return nil, nil
+			return nil, false, nil
 		}
 		results := make([]string, 0, len(suffixes))
 		for _, suffix := range suffixes {
 			results = append(results, query+suffix)
 		}
-		return results, nil
+		return results, isPartial, nil
 	}
 	qHead += qTail[:n]
-	paths, err := metricsFind(tr, label, qHead, "*", delimiter, isExpand, deadline)
+	paths, isPartial, err := metricsFind(at, denyPartialResponse, tr, label, qHead, "*", delimiter, isExpand, deadline)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	suffix := qTail[n:]
 	qTail = ""
@@ -270,7 +279,7 @@ func metricsFind(tr storage.TimeRange, label, qHead, qTail string, delimiter byt
 	qPrefix := qHead + suffix
 	rePrefix, err := getRegexpForQuery(qPrefix, delimiter)
 	if err != nil {
-		return nil, fmt.Errorf("cannot convert query %q to regexp: %w", qPrefix, err)
+		return nil, false, fmt.Errorf("cannot convert query %q to regexp: %w", qPrefix, err)
 	}
 	results := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -281,9 +290,12 @@ func metricsFind(tr storage.TimeRange, label, qHead, qTail string, delimiter byt
 			results = append(results, path)
 			continue
 		}
-		fullPaths, err := metricsFind(tr, label, path, qTail, delimiter, isExpand, deadline)
+		fullPaths, isPartialLocal, err := metricsFind(at, denyPartialResponse, tr, label, path, qTail, delimiter, isExpand, deadline)
 		if err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		if isPartialLocal {
+			isPartial = true
 		}
 		if isExpand {
 			results = append(results, fullPaths...)
@@ -293,13 +305,13 @@ func metricsFind(tr storage.TimeRange, label, qHead, qTail string, delimiter byt
 			}
 		}
 	}
-	return results, nil
+	return results, isPartial, nil
 }
 
 var (
-	metricsFindDuration   = metrics.NewSummary(`vm_request_duration_seconds{path="/metrics/find"}`)
-	metricsExpandDuration = metrics.NewSummary(`vm_request_duration_seconds{path="/metrics/expand"}`)
-	metricsIndexDuration  = metrics.NewSummary(`vm_request_duration_seconds{path="/metrics/index.json"}`)
+	metricsFindDuration   = metrics.NewSummary(`vm_request_duration_seconds{path="/select/{}/graphite/metrics/find"}`)
+	metricsExpandDuration = metrics.NewSummary(`vm_request_duration_seconds{path="/select/{}/graphite/metrics/expand"}`)
+	metricsIndexDuration  = metrics.NewSummary(`vm_request_duration_seconds{path="/select/{}/graphite/metrics/index.json"}`)
 )
 
 func addAutomaticVariants(query, delimiter string) string {

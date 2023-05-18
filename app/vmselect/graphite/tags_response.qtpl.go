@@ -20,7 +20,7 @@ var (
 )
 
 //line app/vmselect/graphite/tags_response.qtpl:5
-func StreamTagsResponse(qw422016 *qt422016.Writer, tags []string) {
+func StreamTagsResponse(qw422016 *qt422016.Writer, isPartial bool, tags []string) {
 //line app/vmselect/graphite/tags_response.qtpl:5
 	qw422016.N().S(`[`)
 //line app/vmselect/graphite/tags_response.qtpl:7
@@ -45,22 +45,22 @@ func StreamTagsResponse(qw422016 *qt422016.Writer, tags []string) {
 }
 
 //line app/vmselect/graphite/tags_response.qtpl:14
-func WriteTagsResponse(qq422016 qtio422016.Writer, tags []string) {
+func WriteTagsResponse(qq422016 qtio422016.Writer, isPartial bool, tags []string) {
 //line app/vmselect/graphite/tags_response.qtpl:14
 	qw422016 := qt422016.AcquireWriter(qq422016)
 //line app/vmselect/graphite/tags_response.qtpl:14
-	StreamTagsResponse(qw422016, tags)
+	StreamTagsResponse(qw422016, isPartial, tags)
 //line app/vmselect/graphite/tags_response.qtpl:14
 	qt422016.ReleaseWriter(qw422016)
 //line app/vmselect/graphite/tags_response.qtpl:14
 }
 
 //line app/vmselect/graphite/tags_response.qtpl:14
-func TagsResponse(tags []string) string {
+func TagsResponse(isPartial bool, tags []string) string {
 //line app/vmselect/graphite/tags_response.qtpl:14
 	qb422016 := qt422016.AcquireByteBuffer()
 //line app/vmselect/graphite/tags_response.qtpl:14
-	WriteTagsResponse(qb422016, tags)
+	WriteTagsResponse(qb422016, isPartial, tags)
 //line app/vmselect/graphite/tags_response.qtpl:14
 	qs422016 := string(qb422016.B)
 //line app/vmselect/graphite/tags_response.qtpl:14

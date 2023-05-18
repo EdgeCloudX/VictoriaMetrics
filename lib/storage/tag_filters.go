@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/lrucache"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/memory"
@@ -119,7 +120,7 @@ func convertToCompositeTagFilters(tfs *TagFilters) []*TagFilters {
 			atomic.AddUint64(&compositeFilterMissingConversions, 1)
 			return []*TagFilters{tfs}
 		}
-		tfsCompiled := NewTagFilters()
+		tfsCompiled := NewTagFilters(tfs.accountID, tfs.projectID)
 		tfsCompiled.tfs = tfsNew
 		tfssCompiled = append(tfssCompiled, tfsCompiled)
 	}
@@ -134,17 +135,22 @@ var (
 
 // TagFilters represents filters used for filtering tags.
 type TagFilters struct {
+	accountID uint32
+	projectID uint32
+
 	tfs []tagFilter
 
 	// Common prefix for all the tag filters.
-	// Contains encoded nsPrefixTagToMetricIDs.
+	// Contains encoded nsPrefixTagToMetricIDs + accountID + projectID.
 	commonPrefix []byte
 }
 
-// NewTagFilters returns new TagFilters.
-func NewTagFilters() *TagFilters {
+// NewTagFilters returns new TagFilters for the given accountID and projectID.
+func NewTagFilters(accountID, projectID uint32) *TagFilters {
 	return &TagFilters{
-		commonPrefix: marshalCommonPrefix(nil, nsPrefixTagToMetricIDs),
+		accountID:    accountID,
+		projectID:    projectID,
+		commonPrefix: marshalCommonPrefix(nil, nsPrefixTagToMetricIDs, accountID, projectID),
 	}
 }
 
@@ -216,13 +222,15 @@ func (tfs *TagFilters) String() string {
 	for _, tf := range tfs.tfs {
 		a = append(a, tf.String())
 	}
-	return fmt.Sprintf("{%s}", strings.Join(a, ","))
+	return fmt.Sprintf("{AccountID=%d,ProjectID=%d,%s}", tfs.accountID, tfs.projectID, strings.Join(a, ","))
 }
 
-// Reset resets the tf
-func (tfs *TagFilters) Reset() {
+// Reset resets the tf for the given accountID and projectID
+func (tfs *TagFilters) Reset(accountID, projectID uint32) {
+	tfs.accountID = accountID
+	tfs.projectID = projectID
 	tfs.tfs = tfs.tfs[:0]
-	tfs.commonPrefix = marshalCommonPrefix(tfs.commonPrefix[:0], nsPrefixTagToMetricIDs)
+	tfs.commonPrefix = marshalCommonPrefix(tfs.commonPrefix[:0], nsPrefixTagToMetricIDs, accountID, projectID)
 }
 
 // tagFilter represents a filter used for filtering tags.
@@ -238,7 +246,7 @@ type tagFilter struct {
 	// contains the prefix for regexp filter if isRegexp==true.
 	regexpPrefix string
 
-	// Prefix contains either {nsPrefixTagToMetricIDs, key} or {nsPrefixDateTagToMetricIDs, date, key}.
+	// Prefix contains either {nsPrefixTagToMetricIDs, AccountID, ProjectID, key} or {nsPrefixDateTagToMetricIDs, AccountID, ProjectID, date, key}.
 	// Additionally it contains:
 	//  - value if !isRegexp.
 	//  - regexpPrefix if isRegexp.
@@ -323,9 +331,15 @@ func (tf *tagFilter) getOp() string {
 	return "="
 }
 
-// Marshal appends marshaled tf to dst
+func (tf *tagFilter) Marshal(dst []byte, accountID, projectID uint32) []byte {
+	dst = encoding.MarshalUint32(dst, accountID)
+	dst = encoding.MarshalUint32(dst, projectID)
+	return tf.MarshalNoAccountIDProjectID(dst)
+}
+
+// MarshalNoAccountIDProjectID appends marshaled tf to dst
 // and returns the result.
-func (tf *tagFilter) Marshal(dst []byte) []byte {
+func (tf *tagFilter) MarshalNoAccountIDProjectID(dst []byte) []byte {
 	dst = marshalTagValue(dst, tf.key)
 	dst = marshalTagValue(dst, tf.value)
 
@@ -392,7 +406,7 @@ func getCommonPrefix(ss []string) (string, []string) {
 
 // Init initializes the tag filter for the given commonPrefix, key and value.
 //
-// commonPrefix must contain either {nsPrefixTagToMetricIDs} or {nsPrefixDateTagToMetricIDs, date}.
+// commonPrefix must contain either {nsPrefixTagToMetricIDs, AccountID, ProjectID} or {nsPrefixDateTagToMetricIDs, AccountID, ProjectID, date}.
 //
 // If isNegaitve is true, then the tag filter matches all the values
 // except the given one.

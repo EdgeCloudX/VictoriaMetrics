@@ -3,23 +3,26 @@ package prometheusimport
 import (
 	"net/http"
 
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/common"
+	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/httpserver"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompbmarshal"
 	parserCommon "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/common"
 	parser "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/prometheus"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/prometheus/stream"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/tenantmetrics"
 	"github.com/VictoriaMetrics/metrics"
 )
 
 var (
-	rowsInserted  = metrics.NewCounter(`vm_rows_inserted_total{type="prometheus"}`)
-	rowsPerInsert = metrics.NewHistogram(`vm_rows_per_insert{type="prometheus"}`)
+	rowsInserted       = metrics.NewCounter(`vm_rows_inserted_total{type="prometheus"}`)
+	rowsTenantInserted = tenantmetrics.NewCounterMap(`vm_tenant_inserted_rows_total{type="prometheus"}`)
+	rowsPerInsert      = metrics.NewHistogram(`vm_rows_per_insert{type="prometheus"}`)
 )
 
 // InsertHandler processes `/api/v1/import/prometheus` request.
-func InsertHandler(req *http.Request) error {
+func InsertHandler(at *auth.Token, req *http.Request) error {
 	extraLabels, err := parserCommon.GetExtraLabels(req)
 	if err != nil {
 		return err
@@ -30,17 +33,18 @@ func InsertHandler(req *http.Request) error {
 	}
 	isGzipped := req.Header.Get("Content-Encoding") == "gzip"
 	return stream.Parse(req.Body, defaultTimestamp, isGzipped, func(rows []parser.Row) error {
-		return insertRows(rows, extraLabels)
+		return insertRows(at, rows, extraLabels)
 	}, func(s string) {
 		httpserver.LogError(req, s)
 	})
 }
 
-func insertRows(rows []parser.Row, extraLabels []prompbmarshal.Label) error {
-	ctx := common.GetInsertCtx()
-	defer common.PutInsertCtx(ctx)
+func insertRows(at *auth.Token, rows []parser.Row, extraLabels []prompbmarshal.Label) error {
+	ctx := netstorage.GetInsertCtx()
+	defer netstorage.PutInsertCtx(ctx)
 
-	ctx.Reset(len(rows))
+	ctx.Reset() // This line is required for initializing ctx internals.
+	perTenantRows := make(map[auth.Token]int)
 	hasRelabeling := relabel.HasRelabeling()
 	for i := range rows {
 		r := &rows[i]
@@ -62,11 +66,14 @@ func insertRows(rows []parser.Row, extraLabels []prompbmarshal.Label) error {
 			continue
 		}
 		ctx.SortLabelsIfNeeded()
-		if err := ctx.WriteDataPoint(nil, ctx.Labels, r.Timestamp, r.Value); err != nil {
+		atLocal := ctx.GetLocalAuthToken(at)
+		if err := ctx.WriteDataPoint(atLocal, ctx.Labels, r.Timestamp, r.Value); err != nil {
 			return err
 		}
+		perTenantRows[*atLocal]++
 	}
 	rowsInserted.Add(len(rows))
+	rowsTenantInserted.MultiAdd(perTenantRows)
 	rowsPerInsert.Update(float64(len(rows)))
 	return ctx.FlushBufs()
 }

@@ -77,10 +77,11 @@ var tmpBlocksFilePool sync.Pool
 type tmpBlockAddr struct {
 	offset uint64
 	size   int
+	tbfIdx uint
 }
 
 func (addr tmpBlockAddr) String() string {
-	return fmt.Sprintf("offset %d, size %d", addr.offset, addr.size)
+	return fmt.Sprintf("offset %d, size %d, tbfIdx %d", addr.offset, addr.size, addr.tbfIdx)
 }
 
 var (
@@ -90,12 +91,13 @@ var (
 	})
 )
 
-// WriteBlockRefData writes br to tbf.
+// WriteBlockData writes b to tbf.
 //
 // It returns errors since the operation may fail on space shortage
 // and this must be handled.
-func (tbf *tmpBlocksFile) WriteBlockRefData(b []byte) (tmpBlockAddr, error) {
+func (tbf *tmpBlocksFile) WriteBlockData(b []byte, tbfIdx uint) (tmpBlockAddr, error) {
 	var addr tmpBlockAddr
+	addr.tbfIdx = tbfIdx
 	addr.offset = tbf.offset
 	addr.size = len(b)
 	tbf.offset += uint64(addr.size)
@@ -148,7 +150,7 @@ func (tbf *tmpBlocksFile) Finalize() error {
 	return nil
 }
 
-func (tbf *tmpBlocksFile) MustReadBlockRefAt(partRef storage.PartRef, addr tmpBlockAddr) storage.BlockRef {
+func (tbf *tmpBlocksFile) MustReadBlockAt(dst *storage.Block, addr tmpBlockAddr) {
 	var buf []byte
 	if tbf.f == nil {
 		buf = tbf.buf[addr.offset : addr.offset+uint64(addr.size)]
@@ -159,11 +161,13 @@ func (tbf *tmpBlocksFile) MustReadBlockRefAt(partRef storage.PartRef, addr tmpBl
 		tbf.r.MustReadAt(bb.B, int64(addr.offset))
 		buf = bb.B
 	}
-	var br storage.BlockRef
-	if err := br.Init(partRef, buf); err != nil {
-		logger.Panicf("FATAL: cannot initialize BlockRef: %s", err)
+	tail, err := storage.UnmarshalBlock(dst, buf)
+	if err != nil {
+		logger.Panicf("FATAL: cannot unmarshal data at %s: %s", addr, err)
 	}
-	return br
+	if len(tail) > 0 {
+		logger.Panicf("FATAL: unexpected non-empty tail left after unmarshaling data at %s; len(tail)=%d", addr, len(tail))
+	}
 }
 
 var tmpBufPool bytesutil.ByteBufferPool

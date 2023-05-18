@@ -6,9 +6,10 @@
 
 LabelsResponse generates response for /api/v1/labels .
 See https://prometheus.io/docs/prometheus/latest/querying/api/#getting-label-names
-{% func LabelsResponse(labels []string, qt *querytracer.Tracer) %}
+{% func LabelsResponse(isPartial bool, labels []string, qt *querytracer.Tracer) %}
 {
 	"status":"success",
+	"isPartial":{% if isPartial %}true{% else %}false{% endif %},
 	"data":[
 		{% for i, label := range labels %}
 			{%q= label %}

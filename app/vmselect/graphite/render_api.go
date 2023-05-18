@@ -10,6 +10,7 @@ import (
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/bufferedwriter"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/searchutils"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/metrics"
 )
 
@@ -24,7 +25,7 @@ var (
 // RenderHandler implements /render endpoint from Graphite Render API.
 //
 // See https://graphite.readthedocs.io/en/stable/render_api.html
-func RenderHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) error {
+func RenderHandler(startTime time.Time, at *auth.Token, w http.ResponseWriter, r *http.Request) error {
 	deadline := searchutils.GetDeadlineForQuery(r, startTime)
 	format := r.FormValue("format")
 	if format != "json" {
@@ -97,6 +98,7 @@ func RenderHandler(startTime time.Time, w http.ResponseWriter, r *http.Request) 
 	targets := r.Form["target"]
 	for _, target := range targets {
 		ec := &evalConfig{
+			at:            at,
 			startTime:     fromTime,
 			endTime:       untilTime,
 			storageStep:   storageStep,

@@ -179,7 +179,7 @@ func (uw *unmarshalWork) Unmarshal() {
 
 func (uw *unmarshalWork) unmarshal() error {
 	block := &uw.block
-	if err := block.MetricName.Unmarshal(uw.metricNameBuf); err != nil {
+	if err := block.MetricName.UnmarshalNoAccountIDProjectID(uw.metricNameBuf); err != nil {
 		return fmt.Errorf("cannot unmarshal metricName from %d bytes: %w", len(uw.metricNameBuf), err)
 	}
 	tmpBlock := blockPool.Get().(*storage.Block)

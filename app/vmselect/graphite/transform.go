@@ -3169,7 +3169,7 @@ func transformSeriesByTag(ec *evalConfig, fe *graphiteql.FuncExpr) (nextSeriesFu
 		}
 		tagExpressions = append(tagExpressions, te)
 	}
-	sq, err := getSearchQueryForExprs(ec.currentTime, ec.etfs, tagExpressions, *maxGraphiteSeries)
+	sq, err := getSearchQueryForExprs(ec.currentTime, ec.at, ec.etfs, tagExpressions, *maxGraphiteSeries)
 	if err != nil {
 		return nil, err
 	}

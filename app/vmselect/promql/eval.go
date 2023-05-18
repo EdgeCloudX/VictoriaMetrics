@@ -13,6 +13,7 @@ import (
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/searchutils"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/cgroup"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/decimal"
@@ -100,9 +101,10 @@ func alignStartEnd(start, end, step int64) (int64, int64) {
 
 // EvalConfig is the configuration required for query evaluation via Exec
 type EvalConfig struct {
-	Start int64
-	End   int64
-	Step  int64
+	AuthToken *auth.Token
+	Start     int64
+	End       int64
+	Step      int64
 
 	// MaxSeries is the maximum number of time series, which can be scanned by the query.
 	// Zero means 'no limit'
@@ -132,6 +134,12 @@ type EvalConfig struct {
 	// The request URI isn't stored here because its' construction may take non-trivial amounts of CPU.
 	GetRequestURI func() string
 
+	// Whether to deny partial response.
+	DenyPartialResponse bool
+
+	// IsPartialResponse is set during query execution and can be used by Exec caller after query execution.
+	IsPartialResponse atomic.Bool
+
 	// QueryStats contains various stats for the currently executed query.
 	//
 	// The caller must initialize the QueryStats if it needs the stats.
@@ -145,6 +153,7 @@ type EvalConfig struct {
 // copyEvalConfig returns src copy.
 func copyEvalConfig(src *EvalConfig) *EvalConfig {
 	var ec EvalConfig
+	ec.AuthToken = src.AuthToken
 	ec.Start = src.Start
 	ec.End = src.End
 	ec.Step = src.Step
@@ -156,6 +165,8 @@ func copyEvalConfig(src *EvalConfig) *EvalConfig {
 	ec.RoundDigits = src.RoundDigits
 	ec.EnforcedTagFilterss = src.EnforcedTagFilterss
 	ec.GetRequestURI = src.GetRequestURI
+	ec.DenyPartialResponse = src.DenyPartialResponse
+	ec.IsPartialResponse.Store(src.IsPartialResponse.Load())
 	ec.QueryStats = src.QueryStats
 
 	// do not copy src.timestamps - they must be generated again.
@@ -172,6 +183,10 @@ func (qs *QueryStats) addSeriesFetched(n int) {
 	if qs != nil {
 		qs.SeriesFetched += n
 	}
+}
+
+func (ec *EvalConfig) updateIsPartialResponse(isPartialResponse bool) {
+	ec.IsPartialResponse.CompareAndSwap(false, isPartialResponse)
 }
 
 func (ec *EvalConfig) validate() {
@@ -857,6 +872,7 @@ func evalRollupFuncWithoutAt(qt *querytracer.Tracer, ec *EvalConfig, funcName st
 	if funcName == "absent_over_time" {
 		rvs = aggregateAbsentOverTime(ec, re.Expr, rvs)
 	}
+	ec.updateIsPartialResponse(ecNew.IsPartialResponse.Load())
 	if offset != 0 && len(rvs) > 0 {
 		// Make a copy of timestamps, since they may be used in other values.
 		srcTimestamps := rvs[0].Timestamps
@@ -916,6 +932,7 @@ func evalRollupFuncWithSubquery(qt *querytracer.Tracer, ec *EvalConfig, funcName
 	if err != nil {
 		return nil, err
 	}
+	ec.updateIsPartialResponse(ecSQ.IsPartialResponse.Load())
 	if len(tssSQ) == 0 {
 		return nil, nil
 	}
@@ -1083,13 +1100,14 @@ func evalRollupFuncWithMetricExpr(qt *querytracer.Tracer, ec *EvalConfig, funcNa
 	} else {
 		minTimestamp -= ec.Step
 	}
-	sq := storage.NewSearchQuery(minTimestamp, ec.End, tfss, ec.MaxSeries)
-	rss, err := netstorage.ProcessSearchQuery(qt, sq, ec.Deadline)
+	sq := storage.NewSearchQuery(ec.AuthToken.AccountID, ec.AuthToken.ProjectID, minTimestamp, ec.End, tfss, ec.MaxSeries)
+	rss, isPartial, err := netstorage.ProcessSearchQuery(qt, ec.DenyPartialResponse, sq, ec.Deadline)
 	if err != nil {
 		return nil, &UserReadableError{
 			Err: err,
 		}
 	}
+	ec.updateIsPartialResponse(isPartial)
 	rssLen := rss.Len()
 	if rssLen == 0 {
 		rss.Cancel()
@@ -1167,7 +1185,9 @@ func evalRollupFuncWithMetricExpr(qt *querytracer.Tracer, ec *EvalConfig, funcNa
 		}
 	}
 	tss = mergeTimeseries(tssCached, tss, start, ec)
-	rollupResultCacheV.Put(qt, ec, expr, window, tss)
+	if !isPartial {
+		rollupResultCacheV.Put(qt, ec, expr, window, tss)
+	}
 	return tss, nil
 }
 
@@ -1178,7 +1198,7 @@ var (
 
 func getRollupMemoryLimiter() *memoryLimiter {
 	rollupMemoryLimiterOnce.Do(func() {
-		rollupMemoryLimiter.MaxSize = uint64(memory.Allowed()) / 4
+		rollupMemoryLimiter.MaxSize = uint64(memory.Allowed()) / 2
 	})
 	return &rollupMemoryLimiter
 }
@@ -1320,6 +1340,8 @@ var bbPool bytesutil.ByteBufferPool
 func evalNumber(ec *EvalConfig, n float64) []*timeseries {
 	var ts timeseries
 	ts.denyReuse = true
+	ts.MetricName.AccountID = ec.AuthToken.AccountID
+	ts.MetricName.ProjectID = ec.AuthToken.ProjectID
 	timestamps := ec.getSharedTimestamps()
 	values := make([]float64, len(timestamps))
 	for i := range timestamps {

@@ -56,6 +56,8 @@ func TestMarshalTimeseriesFast(t *testing.T) {
 	}})
 	f([]*timeseries{{
 		MetricName: storage.MetricName{
+			AccountID:   8934,
+			ProjectID:   8984,
 			MetricGroup: []byte("foobar"),
 			Tags: []storage.Tag{
 				{
@@ -77,6 +79,8 @@ func TestMarshalTimeseriesFast(t *testing.T) {
 	f([]*timeseries{
 		{
 			MetricName: storage.MetricName{
+				AccountID:   898,
+				ProjectID:   9899889,
 				MetricGroup: []byte("foobar"),
 				Tags: []storage.Tag{
 					{

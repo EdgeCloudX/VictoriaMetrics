@@ -2,7 +2,7 @@
 
 Tags generates response for /tags handler
 See https://graphite.readthedocs.io/en/stable/tags.html#exploring-tags
-{% func TagsResponse(tags []string) %}
+{% func TagsResponse(isPartial bool, tags []string) %}
 [
 	{% for i, tag := range tags %}
 		{

@@ -1,6 +1,6 @@
 {% stripspace %}
 
-{% func TagsFindSeriesResponse(paths []string) %}
+{% func TagsFindSeriesResponse(isPartial bool, paths []string) %}
 [
 	{% for i, path := range paths %}
 		{%q= path %}

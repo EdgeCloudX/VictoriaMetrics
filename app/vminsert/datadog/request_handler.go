@@ -3,44 +3,45 @@ package datadog
 import (
 	"net/http"
 
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/common"
+	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompbmarshal"
 	parserCommon "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/common"
 	parser "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/datadog"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/datadog/stream"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/tenantmetrics"
 	"github.com/VictoriaMetrics/metrics"
 )
 
 var (
-	rowsInserted  = metrics.NewCounter(`vm_rows_inserted_total{type="datadog"}`)
-	rowsPerInsert = metrics.NewHistogram(`vm_rows_per_insert{type="datadog"}`)
+	rowsInserted       = metrics.NewCounter(`vm_rows_inserted_total{type="datadog"}`)
+	rowsTenantInserted = tenantmetrics.NewCounterMap(`vm_tenant_inserted_rows_total{type="datadog"}`)
+	rowsPerInsert      = metrics.NewHistogram(`vm_rows_per_insert{type="datadog"}`)
 )
 
 // InsertHandlerForHTTP processes remote write for DataDog POST /api/v1/series request.
 //
 // See https://docs.datadoghq.com/api/latest/metrics/#submit-metrics
-func InsertHandlerForHTTP(req *http.Request) error {
+func InsertHandlerForHTTP(at *auth.Token, req *http.Request) error {
 	extraLabels, err := parserCommon.GetExtraLabels(req)
 	if err != nil {
 		return err
 	}
 	ce := req.Header.Get("Content-Encoding")
 	return stream.Parse(req.Body, ce, func(series []parser.Series) error {
-		return insertRows(series, extraLabels)
+		return insertRows(at, series, extraLabels)
 	})
 }
 
-func insertRows(series []parser.Series, extraLabels []prompbmarshal.Label) error {
-	ctx := common.GetInsertCtx()
-	defer common.PutInsertCtx(ctx)
+func insertRows(at *auth.Token, series []parser.Series, extraLabels []prompbmarshal.Label) error {
+	ctx := netstorage.GetInsertCtx()
+	defer netstorage.PutInsertCtx(ctx)
 
-	rowsLen := 0
-	for i := range series {
-		rowsLen += len(series[i].Points)
-	}
-	ctx.Reset(rowsLen)
+	ctx.Reset()
 	rowsTotal := 0
+	perTenantRows := make(map[auth.Token]int)
 	hasRelabeling := relabel.HasRelabeling()
 	for i := range series {
 		ss := &series[i]
@@ -72,18 +73,20 @@ func insertRows(series []parser.Series, extraLabels []prompbmarshal.Label) error
 			continue
 		}
 		ctx.SortLabelsIfNeeded()
-		var metricNameRaw []byte
-		var err error
+		atLocal := ctx.GetLocalAuthToken(at)
+		ctx.MetricNameBuf = storage.MarshalMetricNameRaw(ctx.MetricNameBuf[:0], atLocal.AccountID, atLocal.ProjectID, ctx.Labels)
+		storageNodeIdx := ctx.GetStorageNodeIdx(atLocal, ctx.Labels)
 		for _, pt := range ss.Points {
 			timestamp := pt.Timestamp()
 			value := pt.Value()
-			metricNameRaw, err = ctx.WriteDataPointExt(metricNameRaw, ctx.Labels, timestamp, value)
-			if err != nil {
+			if err := ctx.WriteDataPointExt(storageNodeIdx, ctx.MetricNameBuf, timestamp, value); err != nil {
 				return err
 			}
 		}
+		perTenantRows[*atLocal] += len(ss.Points)
 	}
 	rowsInserted.Add(rowsTotal)
+	rowsTenantInserted.MultiAdd(perTenantRows)
 	rowsPerInsert.Update(float64(rowsTotal))
 	return ctx.FlushBufs()
 }

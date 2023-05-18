@@ -20,7 +20,7 @@ var (
 )
 
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:5
-func StreamTagsAutoCompleteResponse(qw422016 *qt422016.Writer, ss []string, jsonp string) {
+func StreamTagsAutoCompleteResponse(qw422016 *qt422016.Writer, isPartial bool, ss []string, jsonp string) {
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:6
 	if jsonp != "" {
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:6
@@ -55,22 +55,22 @@ func StreamTagsAutoCompleteResponse(qw422016 *qt422016.Writer, ss []string, json
 }
 
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
-func WriteTagsAutoCompleteResponse(qq422016 qtio422016.Writer, ss []string, jsonp string) {
+func WriteTagsAutoCompleteResponse(qq422016 qtio422016.Writer, isPartial bool, ss []string, jsonp string) {
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
 	qw422016 := qt422016.AcquireWriter(qq422016)
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
-	StreamTagsAutoCompleteResponse(qw422016, ss, jsonp)
+	StreamTagsAutoCompleteResponse(qw422016, isPartial, ss, jsonp)
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
 	qt422016.ReleaseWriter(qw422016)
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
 }
 
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
-func TagsAutoCompleteResponse(ss []string, jsonp string) string {
+func TagsAutoCompleteResponse(isPartial bool, ss []string, jsonp string) string {
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
 	qb422016 := qt422016.AcquireByteBuffer()
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
-	WriteTagsAutoCompleteResponse(qb422016, ss, jsonp)
+	WriteTagsAutoCompleteResponse(qb422016, isPartial, ss, jsonp)
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14
 	qs422016 := string(qb422016.B)
 //line app/vmselect/graphite/tags_autocomplete_response.qtpl:14

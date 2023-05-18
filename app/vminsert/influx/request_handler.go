@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/common"
+	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vminsert/relabel"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/cgroup"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
@@ -16,6 +17,7 @@ import (
 	parser "github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/influx"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/protoparser/influx/stream"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/tenantmetrics"
 	"github.com/VictoriaMetrics/metrics"
 )
 
@@ -27,23 +29,24 @@ var (
 )
 
 var (
-	rowsInserted  = metrics.NewCounter(`vm_rows_inserted_total{type="influx"}`)
-	rowsPerInsert = metrics.NewHistogram(`vm_rows_per_insert{type="influx"}`)
+	rowsInserted       = metrics.NewCounter(`vm_rows_inserted_total{type="influx"}`)
+	rowsTenantInserted = tenantmetrics.NewCounterMap(`vm_tenant_inserted_rows_total{type="influx"}`)
+	rowsPerInsert      = metrics.NewHistogram(`vm_rows_per_insert{type="influx"}`)
 )
 
 // InsertHandlerForReader processes remote write for influx line protocol.
 //
 // See https://github.com/influxdata/telegraf/tree/master/plugins/inputs/socket_listener/
-func InsertHandlerForReader(r io.Reader) error {
+func InsertHandlerForReader(at *auth.Token, r io.Reader) error {
 	return stream.Parse(r, false, "", "", func(db string, rows []parser.Row) error {
-		return insertRows(db, rows, nil)
+		return insertRows(at, db, rows, nil)
 	})
 }
 
 // InsertHandlerForHTTP processes remote write for influx line protocol.
 //
 // See https://github.com/influxdata/influxdb/blob/4cbdc197b8117fee648d62e2e5be75c6575352f0/tsdb/README.md
-func InsertHandlerForHTTP(req *http.Request) error {
+func InsertHandlerForHTTP(at *auth.Token, req *http.Request) error {
 	extraLabels, err := parserCommon.GetExtraLabels(req)
 	if err != nil {
 		return err
@@ -54,21 +57,18 @@ func InsertHandlerForHTTP(req *http.Request) error {
 	// Read db tag from https://docs.influxdata.com/influxdb/v1.7/tools/api/#write-http-endpoint
 	db := q.Get("db")
 	return stream.Parse(req.Body, isGzipped, precision, db, func(db string, rows []parser.Row) error {
-		return insertRows(db, rows, extraLabels)
+		return insertRows(at, db, rows, extraLabels)
 	})
 }
 
-func insertRows(db string, rows []parser.Row, extraLabels []prompbmarshal.Label) error {
+func insertRows(at *auth.Token, db string, rows []parser.Row, extraLabels []prompbmarshal.Label) error {
 	ctx := getPushCtx()
 	defer putPushCtx(ctx)
 
-	rowsLen := 0
-	for i := range rows {
-		rowsLen += len(rows[i].Fields)
-	}
 	ic := &ctx.Common
-	ic.Reset(rowsLen)
+	ic.Reset() // This line is required for initializing ic internals.
 	rowsTotal := 0
+	perTenantRows := make(map[auth.Token]int)
 	hasRelabeling := relabel.HasRelabeling()
 	for i := range rows {
 		r := &rows[i]
@@ -115,13 +115,22 @@ func insertRows(db string, rows []parser.Row, extraLabels []prompbmarshal.Label)
 					continue
 				}
 				ic.SortLabelsIfNeeded()
-				if err := ic.WriteDataPoint(nil, ic.Labels, r.Timestamp, f.Value); err != nil {
+				atLocal := ic.GetLocalAuthToken(at)
+				ic.MetricNameBuf = storage.MarshalMetricNameRaw(ic.MetricNameBuf[:0], atLocal.AccountID, atLocal.ProjectID, nil)
+				for i := range ic.Labels {
+					ic.MetricNameBuf = storage.MarshalMetricLabelRaw(ic.MetricNameBuf, &ic.Labels[i])
+				}
+				storageNodeIdx := ic.GetStorageNodeIdx(atLocal, ic.Labels)
+				if err := ic.WriteDataPointExt(storageNodeIdx, ic.MetricNameBuf, r.Timestamp, f.Value); err != nil {
 					return err
 				}
+				perTenantRows[*atLocal]++
 			}
 		} else {
 			ic.SortLabelsIfNeeded()
-			ctx.metricNameBuf = storage.MarshalMetricNameRaw(ctx.metricNameBuf[:0], ic.Labels)
+			atLocal := ic.GetLocalAuthToken(at)
+			ic.MetricNameBuf = storage.MarshalMetricNameRaw(ic.MetricNameBuf[:0], atLocal.AccountID, atLocal.ProjectID, ic.Labels)
+			metricNameBufLen := len(ic.MetricNameBuf)
 			labelsLen := len(ic.Labels)
 			for j := range r.Fields {
 				f := &r.Fields[j]
@@ -135,27 +144,30 @@ func insertRows(db string, rows []parser.Row, extraLabels []prompbmarshal.Label)
 					// Skip metric without labels.
 					continue
 				}
-				if err := ic.WriteDataPoint(ctx.metricNameBuf, ic.Labels[len(ic.Labels)-1:], r.Timestamp, f.Value); err != nil {
+				ic.MetricNameBuf = ic.MetricNameBuf[:metricNameBufLen]
+				ic.MetricNameBuf = storage.MarshalMetricLabelRaw(ic.MetricNameBuf, &ic.Labels[len(ic.Labels)-1])
+				storageNodeIdx := ic.GetStorageNodeIdx(atLocal, ic.Labels)
+				if err := ic.WriteDataPointExt(storageNodeIdx, ic.MetricNameBuf, r.Timestamp, f.Value); err != nil {
 					return err
 				}
+				perTenantRows[*atLocal]++
 			}
 		}
 	}
 	rowsInserted.Add(rowsTotal)
+	rowsTenantInserted.MultiAdd(perTenantRows)
 	rowsPerInsert.Update(float64(rowsTotal))
 	return ic.FlushBufs()
 }
 
 type pushCtx struct {
-	Common         common.InsertCtx
-	metricNameBuf  []byte
+	Common         netstorage.InsertCtx
 	metricGroupBuf []byte
 	originLabels   []prompb.Label
 }
 
 func (ctx *pushCtx) reset() {
-	ctx.Common.Reset(0)
-	ctx.metricNameBuf = ctx.metricNameBuf[:0]
+	ctx.Common.Reset()
 	ctx.metricGroupBuf = ctx.metricGroupBuf[:0]
 
 	originLabels := ctx.originLabels

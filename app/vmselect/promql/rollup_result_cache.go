@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/bytesutil"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/fasttime"
@@ -26,57 +27,8 @@ import (
 var (
 	cacheTimestampOffset = flag.Duration("search.cacheTimestampOffset", 5*time.Minute, "The maximum duration since the current time for response data, "+
 		"which is always queried from the original raw data, without using the response cache. Increase this value if you see gaps in responses "+
-		"due to time synchronization issues between VictoriaMetrics and data sources. See also -search.disableAutoCacheReset")
-	disableAutoCacheReset = flag.Bool("search.disableAutoCacheReset", false, "Whether to disable automatic response cache reset if a sample with timestamp "+
-		"outside -search.cacheTimestampOffset is inserted into VictoriaMetrics")
+		"due to time synchronization issues between VictoriaMetrics and data sources")
 )
-
-// ResetRollupResultCacheIfNeeded resets rollup result cache if mrs contains timestamps outside `now - search.cacheTimestampOffset`.
-func ResetRollupResultCacheIfNeeded(mrs []storage.MetricRow) {
-	if *disableAutoCacheReset {
-		// Do not reset response cache if -search.disableAutoCacheReset is set.
-		// See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/1570 .
-		return
-	}
-	checkRollupResultCacheResetOnce.Do(func() {
-		rollupResultResetMetricRowSample.Store(&storage.MetricRow{})
-		go checkRollupResultCacheReset()
-	})
-	minTimestamp := int64(fasttime.UnixTimestamp()*1000) - cacheTimestampOffset.Milliseconds() + checkRollupResultCacheResetInterval.Milliseconds()
-	needCacheReset := false
-	for i := range mrs {
-		if mrs[i].Timestamp < minTimestamp {
-			var mr storage.MetricRow
-			mr.CopyFrom(&mrs[i])
-			rollupResultResetMetricRowSample.Store(&mr)
-			needCacheReset = true
-			break
-		}
-	}
-	if needCacheReset {
-		// Do not call ResetRollupResultCache() here, since it may be heavy when frequently called.
-		atomic.StoreUint32(&needRollupResultCacheReset, 1)
-	}
-}
-
-func checkRollupResultCacheReset() {
-	for {
-		time.Sleep(checkRollupResultCacheResetInterval)
-		if atomic.SwapUint32(&needRollupResultCacheReset, 0) > 0 {
-			mr := rollupResultResetMetricRowSample.Load().(*storage.MetricRow)
-			d := int64(fasttime.UnixTimestamp()*1000) - mr.Timestamp - cacheTimestampOffset.Milliseconds()
-			logger.Warnf("resetting rollup result cache because the metric %s has a timestamp older than -search.cacheTimestampOffset=%s by %.3fs",
-				mr.String(), cacheTimestampOffset, float64(d)/1e3)
-			ResetRollupResultCache()
-		}
-	}
-}
-
-const checkRollupResultCacheResetInterval = 5 * time.Second
-
-var needRollupResultCacheReset uint32
-var checkRollupResultCacheResetOnce sync.Once
-var rollupResultResetMetricRowSample atomic.Value
 
 var rollupResultCacheV = &rollupResultCache{
 	c: workingsetcache.New(1024 * 1024), // This is a cache for testing.
@@ -85,7 +37,7 @@ var rollupResultCachePath string
 
 func getRollupResultCacheSize() int {
 	rollupResultCacheSizeOnce.Do(func() {
-		n := memory.Allowed() / 16
+		n := memory.Allowed() / 8
 		if n <= 0 {
 			n = 1024 * 1024
 		}
@@ -189,6 +141,8 @@ func StopRollupResultCache() {
 		rollupResultCachePath, time.Since(startTime).Seconds(), fcs.EntriesCount, fcs.BytesSize)
 }
 
+// TODO: convert this cache to distributed cache shared among vmselect
+// instances in the cluster.
 type rollupResultCache struct {
 	c *workingsetcache.Cache
 }
@@ -218,7 +172,7 @@ func (rrc *rollupResultCache) Get(qt *querytracer.Tracer, ec *EvalConfig, expr m
 	bb := bbPool.Get()
 	defer bbPool.Put(bb)
 
-	bb.B = marshalRollupResultCacheKey(bb.B[:0], expr, window, ec.Step, ec.EnforcedTagFilterss)
+	bb.B = marshalRollupResultCacheKey(bb.B[:0], ec.AuthToken, expr, window, ec.Step, ec.EnforcedTagFilterss)
 	metainfoBuf := rrc.c.Get(nil, bb.B)
 	if len(metainfoBuf) == 0 {
 		qt.Printf("nothing found")
@@ -240,7 +194,7 @@ func (rrc *rollupResultCache) Get(qt *querytracer.Tracer, ec *EvalConfig, expr m
 	if len(compressedResultBuf.B) == 0 {
 		mi.RemoveKey(key)
 		metainfoBuf = mi.Marshal(metainfoBuf[:0])
-		bb.B = marshalRollupResultCacheKey(bb.B[:0], expr, window, ec.Step, ec.EnforcedTagFilterss)
+		bb.B = marshalRollupResultCacheKey(bb.B[:0], ec.AuthToken, expr, window, ec.Step, ec.EnforcedTagFilterss)
 		rrc.c.Set(bb.B, metainfoBuf)
 		qt.Printf("missing cache entry")
 		return nil, ec.Start
@@ -346,7 +300,7 @@ func (rrc *rollupResultCache) Put(qt *querytracer.Tracer, ec *EvalConfig, expr m
 	metainfoBuf := bbPool.Get()
 	defer bbPool.Put(metainfoBuf)
 
-	metainfoKey.B = marshalRollupResultCacheKey(metainfoKey.B[:0], expr, window, ec.Step, ec.EnforcedTagFilterss)
+	metainfoKey.B = marshalRollupResultCacheKey(metainfoKey.B[:0], ec.AuthToken, expr, window, ec.Step, ec.EnforcedTagFilterss)
 	metainfoBuf.B = rrc.c.Get(metainfoBuf.B[:0], metainfoKey.B)
 	var mi rollupResultCacheMetainfo
 	if len(metainfoBuf.B) > 0 {
@@ -441,9 +395,11 @@ var tooBigRollupResults = metrics.NewCounter("vm_too_big_rollup_results_total")
 // Increment this value every time the format of the cache changes.
 const rollupResultCacheVersion = 9
 
-func marshalRollupResultCacheKey(dst []byte, expr metricsql.Expr, window, step int64, etfs [][]storage.TagFilter) []byte {
+func marshalRollupResultCacheKey(dst []byte, at *auth.Token, expr metricsql.Expr, window, step int64, etfs [][]storage.TagFilter) []byte {
 	dst = append(dst, rollupResultCacheVersion)
 	dst = encoding.MarshalUint64(dst, rollupResultCacheKeyPrefix)
+	dst = encoding.MarshalUint32(dst, at.AccountID)
+	dst = encoding.MarshalUint32(dst, at.ProjectID)
 	dst = encoding.MarshalInt64(dst, window)
 	dst = encoding.MarshalInt64(dst, step)
 	dst = expr.AppendString(dst)

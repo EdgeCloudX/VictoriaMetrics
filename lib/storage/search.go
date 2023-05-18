@@ -31,41 +31,6 @@ func (br *BlockRef) init(p *part, bh *blockHeader) {
 	br.bh = *bh
 }
 
-// Init initializes br from pr and data
-func (br *BlockRef) Init(pr PartRef, data []byte) error {
-	br.p = pr.p
-	tail, err := br.bh.Unmarshal(data)
-	if err != nil {
-		return err
-	}
-	if len(tail) > 0 {
-		return fmt.Errorf("unexpected non-empty tail left after unmarshaling blockHeader; len(tail)=%d; tail=%q", len(tail), tail)
-	}
-	return nil
-}
-
-// Marshal marshals br to dst.
-func (br *BlockRef) Marshal(dst []byte) []byte {
-	return br.bh.Marshal(dst)
-}
-
-// RowsCount returns the number of rows in br.
-func (br *BlockRef) RowsCount() int {
-	return int(br.bh.RowsCount)
-}
-
-// PartRef returns PartRef from br.
-func (br *BlockRef) PartRef() PartRef {
-	return PartRef{
-		p: br.p,
-	}
-}
-
-// PartRef is Part reference.
-type PartRef struct {
-	p *part
-}
-
 // MustReadBlock reads block from br to dst.
 func (br *BlockRef) MustReadBlock(dst *Block) {
 	dst.Reset()
@@ -85,6 +50,77 @@ type MetricBlockRef struct {
 
 	// The block reference. Call BlockRef.MustReadBlock in order to obtain the block.
 	BlockRef *BlockRef
+}
+
+// MetricBlock is a time series block for a single metric.
+type MetricBlock struct {
+	// MetricName is metric name for the given Block.
+	MetricName []byte
+
+	// Block is a block for the given MetricName
+	Block Block
+}
+
+// Marshal marshals MetricBlock to dst
+func (mb *MetricBlock) Marshal(dst []byte) []byte {
+	dst = encoding.MarshalBytes(dst, mb.MetricName)
+	return MarshalBlock(dst, &mb.Block)
+}
+
+// CopyFrom copies src to mb.
+func (mb *MetricBlock) CopyFrom(src *MetricBlock) {
+	mb.MetricName = append(mb.MetricName[:0], src.MetricName...)
+	mb.Block.CopyFrom(&src.Block)
+}
+
+// MarshalBlock marshals b to dst.
+//
+// b.MarshalData must be called on b before calling MarshalBlock.
+func MarshalBlock(dst []byte, b *Block) []byte {
+	dst = b.bh.Marshal(dst)
+	dst = encoding.MarshalBytes(dst, b.timestampsData)
+	dst = encoding.MarshalBytes(dst, b.valuesData)
+	return dst
+}
+
+// Unmarshal unmarshals MetricBlock from src
+func (mb *MetricBlock) Unmarshal(src []byte) ([]byte, error) {
+	mb.Block.Reset()
+	tail, mn, err := encoding.UnmarshalBytes(src)
+	if err != nil {
+		return tail, fmt.Errorf("cannot unmarshal MetricName: %w", err)
+	}
+	mb.MetricName = append(mb.MetricName[:0], mn...)
+	src = tail
+
+	return UnmarshalBlock(&mb.Block, src)
+}
+
+// UnmarshalBlock unmarshal Block from src to dst.
+//
+// dst.UnmarshalData isn't called on the block.
+func UnmarshalBlock(dst *Block, src []byte) ([]byte, error) {
+	tail, err := dst.bh.Unmarshal(src)
+	if err != nil {
+		return tail, fmt.Errorf("cannot unmarshal blockHeader: %w", err)
+	}
+	src = tail
+
+	tail, tds, err := encoding.UnmarshalBytes(src)
+	if err != nil {
+		return tail, fmt.Errorf("cannot unmarshal timestampsData: %w", err)
+	}
+	dst.timestampsData = append(dst.timestampsData[:0], tds...)
+	src = tail
+
+	tail, vd, err := encoding.UnmarshalBytes(src)
+	if err != nil {
+		return tail, fmt.Errorf("cannot unmarshal valuesData: %w", err)
+	}
+	dst.valuesData = append(dst.valuesData[:0], vd...)
+	src = tail
+
+	return src, nil
 }
 
 // Search is a search for time series.
@@ -157,10 +193,12 @@ func (s *Search) Init(qt *querytracer.Tracer, storage *Storage, tfss []*TagFilte
 
 	var tsids []TSID
 	metricIDs, err := s.idb.searchMetricIDs(qt, tfss, tr, maxMetrics, deadline)
-	if err == nil {
-		tsids, err = s.idb.getTSIDsFromMetricIDs(qt, metricIDs, deadline)
+	if err == nil && len(metricIDs) > 0 && len(tfss) > 0 {
+		accountID := tfss[0].accountID
+		projectID := tfss[0].projectID
+		tsids, err = s.idb.getTSIDsFromMetricIDs(qt, accountID, projectID, metricIDs, deadline)
 		if err == nil {
-			err = storage.prefetchMetricNames(qt, metricIDs, deadline)
+			err = storage.prefetchMetricNames(qt, accountID, projectID, metricIDs, deadline)
 		}
 	}
 	// It is ok to call Init on non-nil err.
@@ -212,7 +250,7 @@ func (s *Search) NextMetricBlock() bool {
 				continue
 			}
 			var err error
-			s.MetricBlockRef.MetricName, err = s.idb.searchMetricNameWithCache(s.MetricBlockRef.MetricName[:0], tsid.MetricID)
+			s.MetricBlockRef.MetricName, err = s.idb.searchMetricNameWithCache(s.MetricBlockRef.MetricName[:0], tsid.MetricID, tsid.AccountID, tsid.ProjectID)
 			if err != nil {
 				if err == io.EOF {
 					// Skip missing metricName for tsid.MetricID.
@@ -238,6 +276,9 @@ func (s *Search) NextMetricBlock() bool {
 
 // SearchQuery is used for sending search queries from vmselect to vmstorage.
 type SearchQuery struct {
+	AccountID uint32
+	ProjectID uint32
+
 	// The time range for searching time series
 	MinTimestamp int64
 	MaxTimestamp int64
@@ -258,11 +299,13 @@ func (sq *SearchQuery) GetTimeRange() TimeRange {
 }
 
 // NewSearchQuery creates new search query for the given args.
-func NewSearchQuery(start, end int64, tagFilterss [][]TagFilter, maxMetrics int) *SearchQuery {
+func NewSearchQuery(accountID, projectID uint32, start, end int64, tagFilterss [][]TagFilter, maxMetrics int) *SearchQuery {
 	if maxMetrics <= 0 {
 		maxMetrics = 2e9
 	}
 	return &SearchQuery{
+		AccountID:    accountID,
+		ProjectID:    projectID,
 		MinTimestamp: start,
 		MaxTimestamp: end,
 		TagFilterss:  tagFilterss,
@@ -367,7 +410,7 @@ func (sq *SearchQuery) String() string {
 	}
 	start := TimestampToHumanReadableFormat(sq.MinTimestamp)
 	end := TimestampToHumanReadableFormat(sq.MaxTimestamp)
-	return fmt.Sprintf("filters=%s, timeRange=[%s..%s]", a, start, end)
+	return fmt.Sprintf("accountID=%d, projectID=%d, filters=%s, timeRange=[%s..%s]", sq.AccountID, sq.ProjectID, a, start, end)
 }
 
 func tagFiltersToString(tfs []TagFilter) string {
@@ -380,6 +423,8 @@ func tagFiltersToString(tfs []TagFilter) string {
 
 // Marshal appends marshaled sq to dst and returns the result.
 func (sq *SearchQuery) Marshal(dst []byte) []byte {
+	dst = encoding.MarshalUint32(dst, sq.AccountID)
+	dst = encoding.MarshalUint32(dst, sq.ProjectID)
 	dst = encoding.MarshalVarInt64(dst, sq.MinTimestamp)
 	dst = encoding.MarshalVarInt64(dst, sq.MaxTimestamp)
 	dst = encoding.MarshalVarUint64(dst, uint64(len(sq.TagFilterss)))
@@ -389,11 +434,24 @@ func (sq *SearchQuery) Marshal(dst []byte) []byte {
 			dst = tagFilters[i].Marshal(dst)
 		}
 	}
+	dst = encoding.MarshalUint32(dst, uint32(sq.MaxMetrics))
 	return dst
 }
 
 // Unmarshal unmarshals sq from src and returns the tail.
 func (sq *SearchQuery) Unmarshal(src []byte) ([]byte, error) {
+	if len(src) < 4 {
+		return src, fmt.Errorf("cannot unmarshal AccountID: too short src len: %d; must be at least %d bytes", len(src), 4)
+	}
+	sq.AccountID = encoding.UnmarshalUint32(src)
+	src = src[4:]
+
+	if len(src) < 4 {
+		return src, fmt.Errorf("cannot unmarshal ProjectID: too short src len: %d; must be at least %d bytes", len(src), 4)
+	}
+	sq.ProjectID = encoding.UnmarshalUint32(src)
+	src = src[4:]
+
 	tail, minTs, err := encoding.UnmarshalVarInt64(src)
 	if err != nil {
 		return src, fmt.Errorf("cannot unmarshal MinTimestamp: %w", err)
@@ -439,6 +497,12 @@ func (sq *SearchQuery) Unmarshal(src []byte) ([]byte, error) {
 		}
 		sq.TagFilterss[i] = tagFilters
 	}
+
+	if len(src) < 4 {
+		return src, fmt.Errorf("cannot unmarshal MaxMetrics: too short src len: %d; must be at least %d bytes", len(src), 4)
+	}
+	sq.MaxMetrics = int(encoding.UnmarshalUint32(src))
+	src = src[4:]
 
 	return src, nil
 }

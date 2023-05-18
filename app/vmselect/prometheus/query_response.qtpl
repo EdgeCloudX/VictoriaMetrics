@@ -7,10 +7,11 @@
 {% stripspace %}
 QueryResponse generates response for /api/v1/query.
 See https://prometheus.io/docs/prometheus/latest/querying/api/#instant-queries
-{% func QueryResponse(rs []netstorage.Result, qt *querytracer.Tracer, qtDone func(), qs *promql.QueryStats) %}
+{% func QueryResponse(isPartial bool, rs []netstorage.Result, qt *querytracer.Tracer, qtDone func(), qs *promql.QueryStats) %}
 {
 	{% code seriesCount := len(rs) %}
 	"status":"success",
+	"isPartial":{% if isPartial %}true{% else %}false{% endif %},
 	"data":{
 		"resultType":"vector",
 		"result":[

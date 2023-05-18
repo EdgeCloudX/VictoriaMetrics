@@ -195,8 +195,8 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 			t.Fatalf("unexpected items;\ngot\n%X\nwant\n%X", resultItems, expectedItems)
 		}
 	}
-	xy := func(nsPrefix byte, key, value string, metricIDs []uint64) string {
-		dst := marshalCommonPrefix(nil, nsPrefix)
+	xy := func(nsPrefix byte, accountID, projectID uint32, key, value string, metricIDs []uint64) string {
+		dst := marshalCommonPrefix(nil, nsPrefix, accountID, projectID)
 		if nsPrefix == nsPrefixDateTagToMetricIDs {
 			dst = encoding.MarshalUint64(dst, 1234567901233)
 		}
@@ -210,11 +210,11 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 		}
 		return string(dst)
 	}
-	x := func(key, value string, metricIDs []uint64) string {
-		return xy(nsPrefixTagToMetricIDs, key, value, metricIDs)
+	x := func(accountID, projectID uint32, key, value string, metricIDs []uint64) string {
+		return xy(nsPrefixTagToMetricIDs, accountID, projectID, key, value, metricIDs)
 	}
-	y := func(key, value string, metricIDs []uint64) string {
-		return xy(nsPrefixDateTagToMetricIDs, key, value, metricIDs)
+	y := func(accountID, projectID uint32, key, value string, metricIDs []uint64) string {
+		return xy(nsPrefixDateTagToMetricIDs, accountID, projectID, key, value, metricIDs)
 	}
 
 	f(nil, nil)
@@ -223,168 +223,184 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	f([]string{"a", "b", "c", "def"}, []string{"a", "b", "c", "def"})
 	f([]string{"\x00", "\x00b", "\x00c", "\x00def"}, []string{"\x00", "\x00b", "\x00c", "\x00def"})
 	f([]string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
 	}, []string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
 	})
 	f([]string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		y(0, 0, "", "", []uint64{0}),
+		y(0, 0, "", "", []uint64{0}),
+		y(0, 0, "", "", []uint64{0}),
 	}, []string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		x(0, 0, "", "", []uint64{0}),
+		y(0, 0, "", "", []uint64{0}),
+		y(0, 0, "", "", []uint64{0}),
 	})
 	f([]string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
 		"xyz",
 	}, []string{
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		"xyz",
-	})
-	f([]string{
-		"\x00asdf",
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-	}, []string{
-		"\x00asdf",
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-	})
-	f([]string{
-		"\x00asdf",
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-	}, []string{
-		"\x00asdf",
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-	})
-	f([]string{
-		"\x00asdf",
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		"xyz",
-	}, []string{
-		"\x00asdf",
-		x("", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
 		"xyz",
 	})
 	f([]string{
 		"\x00asdf",
-		x("", "", []uint64{0}),
-		x("", "", []uint64{0}),
-		y("", "", []uint64{0}),
-		y("", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+	}, []string{
+		"\x00asdf",
+		x(1, 2, "", "", []uint64{0}),
+		x(1, 2, "", "", []uint64{0}),
+	})
+	f([]string{
+		"\x00asdf",
+		y(1, 2, "", "", []uint64{0}),
+		y(1, 2, "", "", []uint64{0}),
+		y(1, 2, "", "", []uint64{0}),
+		y(1, 2, "", "", []uint64{0}),
+	}, []string{
+		"\x00asdf",
+		y(1, 2, "", "", []uint64{0}),
+		y(1, 2, "", "", []uint64{0}),
+	})
+	f([]string{
+		"\x00asdf",
+		x(3, 1, "", "", []uint64{0}),
+		x(3, 1, "", "", []uint64{0}),
+		x(3, 1, "", "", []uint64{0}),
+		x(3, 1, "", "", []uint64{0}),
 		"xyz",
 	}, []string{
 		"\x00asdf",
-		x("", "", []uint64{0}),
-		y("", "", []uint64{0}),
+		x(3, 1, "", "", []uint64{0}),
 		"xyz",
 	})
 	f([]string{
 		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("", "", []uint64{2}),
-		x("", "", []uint64{3}),
-		x("", "", []uint64{4}),
+		x(3, 1, "", "", []uint64{0}),
+		x(3, 1, "", "", []uint64{0}),
+		y(3, 1, "", "", []uint64{0}),
+		y(3, 1, "", "", []uint64{0}),
 		"xyz",
 	}, []string{
 		"\x00asdf",
-		x("", "", []uint64{1, 2, 3, 4}),
+		x(3, 1, "", "", []uint64{0}),
+		y(3, 1, "", "", []uint64{0}),
 		"xyz",
 	})
 	f([]string{
 		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("", "", []uint64{2}),
-		x("", "", []uint64{3}),
-		x("", "", []uint64{4}),
+		x(4, 2, "", "", []uint64{1}),
+		x(4, 2, "", "", []uint64{2}),
+		x(4, 2, "", "", []uint64{3}),
+		x(4, 2, "", "", []uint64{4}),
+		"xyz",
 	}, []string{
 		"\x00asdf",
-		x("", "", []uint64{1, 2, 3}),
-		x("", "", []uint64{4}),
+		x(4, 2, "", "", []uint64{1, 2, 3, 4}),
+		"xyz",
 	})
 	f([]string{
 		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("", "", []uint64{2, 3, 4}),
-		x("", "", []uint64{2, 3, 4, 5}),
-		x("", "", []uint64{3, 5}),
-		"foo",
+		x(1, 1, "", "", []uint64{1}),
+		x(1, 1, "", "", []uint64{2}),
+		x(1, 1, "", "", []uint64{3}),
+		x(1, 1, "", "", []uint64{4}),
 	}, []string{
 		"\x00asdf",
-		x("", "", []uint64{1, 2, 3, 4, 5}),
-		"foo",
+		x(1, 1, "", "", []uint64{1, 2, 3}),
+		x(1, 1, "", "", []uint64{4}),
 	})
 	f([]string{
 		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("", "a", []uint64{2, 3, 4}),
-		x("", "a", []uint64{2, 3, 4, 5}),
-		x("", "b", []uint64{3, 5}),
+		x(2, 2, "", "", []uint64{1}),
+		x(2, 2, "", "", []uint64{2, 3, 4}),
+		x(2, 2, "", "", []uint64{2, 3, 4, 5}),
+		x(2, 2, "", "", []uint64{3, 5}),
 		"foo",
 	}, []string{
 		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("", "a", []uint64{2, 3, 4, 5}),
-		x("", "b", []uint64{3, 5}),
-		"foo",
-	})
-	f([]string{
-		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("x", "a", []uint64{2, 3, 4}),
-		x("y", "", []uint64{2, 3, 4, 5}),
-		x("y", "x", []uint64{3, 5}),
-		"foo",
-	}, []string{
-		"\x00asdf",
-		x("", "", []uint64{1}),
-		x("x", "a", []uint64{2, 3, 4}),
-		x("y", "", []uint64{2, 3, 4, 5}),
-		x("y", "x", []uint64{3, 5}),
+		x(2, 2, "", "", []uint64{1, 2, 3, 4, 5}),
 		"foo",
 	})
 	f([]string{
 		"\x00asdf",
-		x("sdf", "aa", []uint64{1, 1, 3}),
-		x("sdf", "aa", []uint64{1, 2}),
+		x(3, 3, "", "", []uint64{1}),
+		x(3, 3, "", "a", []uint64{2, 3, 4}),
+		x(3, 3, "", "a", []uint64{2, 3, 4, 5}),
+		x(3, 3, "", "b", []uint64{3, 5}),
 		"foo",
 	}, []string{
 		"\x00asdf",
-		x("sdf", "aa", []uint64{1, 2, 3}),
+		x(3, 3, "", "", []uint64{1}),
+		x(3, 3, "", "a", []uint64{2, 3, 4, 5}),
+		x(3, 3, "", "b", []uint64{3, 5}),
 		"foo",
 	})
 	f([]string{
 		"\x00asdf",
-		x("sdf", "aa", []uint64{1, 2, 2, 4}),
-		x("sdf", "aa", []uint64{1, 2, 3}),
+		x(2, 4, "", "", []uint64{1}),
+		x(2, 4, "x", "a", []uint64{2, 3, 4}),
+		x(2, 4, "y", "", []uint64{2, 3, 4, 5}),
+		x(2, 4, "y", "x", []uint64{3, 5}),
 		"foo",
 	}, []string{
 		"\x00asdf",
-		x("sdf", "aa", []uint64{1, 2, 3, 4}),
+		x(2, 4, "", "", []uint64{1}),
+		x(2, 4, "x", "a", []uint64{2, 3, 4}),
+		x(2, 4, "y", "", []uint64{2, 3, 4, 5}),
+		x(2, 4, "y", "x", []uint64{3, 5}),
+		"foo",
+	})
+	f([]string{
+		"\x00asdf",
+		x(2, 4, "x", "a", []uint64{1}),
+		x(2, 5, "x", "a", []uint64{2, 3, 4}),
+		x(3, 4, "x", "a", []uint64{2, 3, 4, 5}),
+		x(3, 4, "x", "b", []uint64{3, 5}),
+		x(3, 4, "x", "b", []uint64{5, 6}),
+		"foo",
+	}, []string{
+		"\x00asdf",
+		x(2, 4, "x", "a", []uint64{1}),
+		x(2, 5, "x", "a", []uint64{2, 3, 4}),
+		x(3, 4, "x", "a", []uint64{2, 3, 4, 5}),
+		x(3, 4, "x", "b", []uint64{3, 5, 6}),
+		"foo",
+	})
+	f([]string{
+		"\x00asdf",
+		x(2, 2, "sdf", "aa", []uint64{1, 1, 3}),
+		x(2, 2, "sdf", "aa", []uint64{1, 2}),
+		"foo",
+	}, []string{
+		"\x00asdf",
+		x(2, 2, "sdf", "aa", []uint64{1, 2, 3}),
+		"foo",
+	})
+	f([]string{
+		"\x00asdf",
+		x(3, 2, "sdf", "aa", []uint64{1, 2, 2, 4}),
+		x(3, 2, "sdf", "aa", []uint64{1, 2, 3}),
+		"foo",
+	}, []string{
+		"\x00asdf",
+		x(3, 2, "sdf", "aa", []uint64{1, 2, 3, 4}),
 		"foo",
 	})
 
@@ -397,15 +413,15 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	}
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
-		y("foo", "bar", metricIDs),
-		y("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		y(2, 3, "foo", "bar", metricIDs),
+		y(2, 3, "foo", "bar", metricIDs),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		y("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		y(2, 3, "foo", "bar", metricIDs),
 		"x",
 	})
 
@@ -415,13 +431,13 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	}
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	})
 
@@ -431,26 +447,26 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	}
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	})
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", []uint64{0, 0, 1, 2, 3}),
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", []uint64{0, 0, 1, 2, 3}),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", []uint64{0, 1, 2, 3}),
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", []uint64{0, 1, 2, 3}),
+		x(3, 2, "foo", "bar", metricIDs),
+		x(3, 2, "foo", "bar", metricIDs),
 		"x",
 	})
 
@@ -461,14 +477,14 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	}
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", metricIDs),
-		y("foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", metricIDs),
+		y(1, 1, "foo", "bar", metricIDs),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", []uint64{123}),
-		y("foo", "bar", []uint64{123}),
+		x(1, 2, "foo", "bar", []uint64{123}),
+		y(1, 1, "foo", "bar", []uint64{123}),
 		"x",
 	})
 
@@ -479,38 +495,38 @@ func TestMergeTagToMetricIDsRows(t *testing.T) {
 	}
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
 		"x",
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
 		"x",
 	})
 	f([]string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
-		y("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
+		y(1, 2, "foo", "bar", []uint64{123, 124}),
 	}, []string{
 		"\x00aa",
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
-		y("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
+		y(1, 2, "foo", "bar", []uint64{123, 124}),
 	})
 	f([]string{
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
 	}, []string{
-		x("foo", "bar", metricIDs),
-		x("foo", "bar", []uint64{123, 123, 125}),
-		x("foo", "bar", []uint64{123, 124}),
+		x(1, 2, "foo", "bar", metricIDs),
+		x(1, 2, "foo", "bar", []uint64{123, 123, 125}),
+		x(1, 2, "foo", "bar", []uint64{123, 124}),
 	})
 }
 
@@ -548,6 +564,8 @@ func TestIndexDBOpenClose(t *testing.T) {
 }
 
 func TestIndexDB(t *testing.T) {
+	const accountsCount = 3
+	const projectsCount = 2
 	const metricGroups = 10
 
 	t.Run("serial", func(t *testing.T) {
@@ -564,18 +582,18 @@ func TestIndexDB(t *testing.T) {
 			}
 		}()
 
-		mns, tsids, err := testIndexDBGetOrCreateTSIDByName(db, metricGroups)
+		mns, tsids, tenants, err := testIndexDBGetOrCreateTSIDByName(db, accountsCount, projectsCount, metricGroups)
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
-		if err := testIndexDBCheckTSIDByName(db, mns, tsids, false); err != nil {
+		if err := testIndexDBCheckTSIDByName(db, mns, tsids, tenants, false); err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
 
 		// Re-open the db and verify it works as expected.
 		db.MustClose()
 		db = mustOpenIndexDB(dbName, s, 0, &isReadOnly)
-		if err := testIndexDBCheckTSIDByName(db, mns, tsids, false); err != nil {
+		if err := testIndexDBCheckTSIDByName(db, mns, tsids, tenants, false); err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
 	})
@@ -597,12 +615,12 @@ func TestIndexDB(t *testing.T) {
 		ch := make(chan error, 3)
 		for i := 0; i < cap(ch); i++ {
 			go func() {
-				mns, tsid, err := testIndexDBGetOrCreateTSIDByName(db, metricGroups)
+				mns, tsid, tenants, err := testIndexDBGetOrCreateTSIDByName(db, accountsCount, projectsCount, metricGroups)
 				if err != nil {
 					ch <- err
 					return
 				}
-				if err := testIndexDBCheckTSIDByName(db, mns, tsid, true); err != nil {
+				if err := testIndexDBCheckTSIDByName(db, mns, tsid, tenants, true); err != nil {
 					ch <- err
 					return
 				}
@@ -626,13 +644,15 @@ func TestIndexDB(t *testing.T) {
 	})
 }
 
-func testIndexDBGetOrCreateTSIDByName(db *indexDB, metricGroups int) ([]MetricName, []TSID, error) {
+func testIndexDBGetOrCreateTSIDByName(db *indexDB, accountsCount, projectsCount, metricGroups int) ([]MetricName, []TSID, []string, error) {
 	r := rand.New(rand.NewSource(1))
+
 	// Create tsids.
 	var mns []MetricName
 	var tsids []TSID
+	tenants := make(map[string]struct{})
 
-	is := db.getIndexSearch(noDeadline)
+	is := db.getIndexSearch(0, 0, noDeadline)
 	defer db.putIndexSearch(is)
 
 	date := uint64(timestampFromTime(time.Now())) / msecPerDay
@@ -641,6 +661,10 @@ func testIndexDBGetOrCreateTSIDByName(db *indexDB, metricGroups int) ([]MetricNa
 	var metricNameRawBuf []byte
 	for i := 0; i < 4e2+1; i++ {
 		var mn MetricName
+		mn.AccountID = uint32((i + 2) % accountsCount)
+		mn.ProjectID = uint32((i + 1) % projectsCount)
+		tenant := fmt.Sprintf("%d:%d", mn.AccountID, mn.ProjectID)
+		tenants[tenant] = struct{}{}
 
 		// Init MetricGroup.
 		mn.MetricGroup = []byte(fmt.Sprintf("metricGroup.%d\x00\x01\x02", i%metricGroups))
@@ -659,7 +683,13 @@ func testIndexDBGetOrCreateTSIDByName(db *indexDB, metricGroups int) ([]MetricNa
 		// Create tsid for the metricName.
 		var genTSID generationTSID
 		if err := is.GetOrCreateTSIDByName(&genTSID, metricNameBuf, metricNameRawBuf, date); err != nil {
-			return nil, nil, fmt.Errorf("unexpected error when creating tsid for mn:\n%s: %w", &mn, err)
+			return nil, nil, nil, fmt.Errorf("unexpected error when creating tsid for mn:\n%s: %w", &mn, err)
+		}
+		if genTSID.TSID.AccountID != mn.AccountID {
+			return nil, nil, nil, fmt.Errorf("unexpected TSID.AccountID; got %d; want %d; mn:\n%s\ntsid:\n%+v", genTSID.TSID.AccountID, mn.AccountID, &mn, &genTSID.TSID)
+		}
+		if genTSID.TSID.ProjectID != mn.ProjectID {
+			return nil, nil, nil, fmt.Errorf("unexpected TSID.ProjectID; got %d; want %d; mn:\n%s\ntsid:\n%+v", genTSID.TSID.ProjectID, mn.ProjectID, &mn, &genTSID.TSID)
 		}
 
 		mns = append(mns, mn)
@@ -675,10 +705,15 @@ func testIndexDBGetOrCreateTSIDByName(db *indexDB, metricGroups int) ([]MetricNa
 	// Flush index to disk, so it becomes visible for search
 	db.tb.DebugFlush()
 
-	return mns, tsids, nil
+	var tenantsList []string
+	for tenant := range tenants {
+		tenantsList = append(tenantsList, tenant)
+	}
+	sort.Strings(tenantsList)
+	return mns, tsids, tenantsList, nil
 }
 
-func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isConcurrent bool) error {
+func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, tenants []string, isConcurrent bool) error {
 	hasValue := func(lvs []string, v []byte) bool {
 		for _, lv := range lvs {
 			if string(v) == lv {
@@ -689,21 +724,29 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 	}
 
 	currentTime := timestampFromTime(time.Now())
-	timeseriesCounters := make(map[uint64]bool)
+	allLabelNames := make(map[accountProjectKey]map[string]bool)
+	timeseriesCounters := make(map[accountProjectKey]map[uint64]bool)
 	var genTSID generationTSID
 	var metricNameCopy []byte
-	allLabelNames := make(map[string]bool)
 	for i := range mns {
 		mn := &mns[i]
 		tsid := &tsids[i]
 
-		tc := timeseriesCounters
+		apKey := accountProjectKey{
+			AccountID: tsid.AccountID,
+			ProjectID: tsid.ProjectID,
+		}
+		tc := timeseriesCounters[apKey]
+		if tc == nil {
+			tc = make(map[uint64]bool)
+			timeseriesCounters[apKey] = tc
+		}
 		tc[tsid.MetricID] = true
 
 		mn.sortTags()
 		metricName := mn.Marshal(nil)
 
-		is := db.getIndexSearch(noDeadline)
+		is := db.getIndexSearch(tsid.AccountID, tsid.ProjectID, noDeadline)
 		if !is.getTSIDByMetricName(&genTSID, metricName, uint64(currentTime)/msecPerDay) {
 			return fmt.Errorf("cannot obtain tsid #%d for mn %s", i, mn)
 		}
@@ -720,7 +763,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 
 		// Search for metric name for the given metricID.
 		var err error
-		metricNameCopy, err = db.searchMetricNameWithCache(metricNameCopy[:0], genTSID.TSID.MetricID)
+		metricNameCopy, err = db.searchMetricNameWithCache(metricNameCopy[:0], genTSID.TSID.MetricID, genTSID.TSID.AccountID, genTSID.TSID.ProjectID)
 		if err != nil {
 			return fmt.Errorf("error in searchMetricNameWithCache for metricID=%d; i=%d: %w", genTSID.TSID.MetricID, i, err)
 		}
@@ -729,7 +772,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Try searching metric name for non-existent MetricID.
-		buf, err := db.searchMetricNameWithCache(nil, 1)
+		buf, err := db.searchMetricNameWithCache(nil, 1, mn.AccountID, mn.ProjectID)
 		if err != io.EOF {
 			return fmt.Errorf("expecting io.EOF error when searching for non-existing metricID; got %v", err)
 		}
@@ -738,55 +781,88 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Test SearchLabelValuesWithFiltersOnTimeRange
-		lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, "__name__", nil, TimeRange{}, 1e5, 1e9, noDeadline)
+		lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, mn.AccountID, mn.ProjectID, "__name__", nil, TimeRange{}, 1e5, 1e9, noDeadline)
 		if err != nil {
 			return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange(labelName=%q): %w", "__name__", err)
 		}
 		if !hasValue(lvs, mn.MetricGroup) {
 			return fmt.Errorf("SearchLabelValuesWithFiltersOnTimeRange(labelName=%q): couldn't find %q; found %q", "__name__", mn.MetricGroup, lvs)
 		}
+		labelNames := allLabelNames[apKey]
+		if labelNames == nil {
+			labelNames = make(map[string]bool)
+			allLabelNames[apKey] = labelNames
+		}
 		for i := range mn.Tags {
 			tag := &mn.Tags[i]
-			lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, string(tag.Key), nil, TimeRange{}, 1e5, 1e9, noDeadline)
+			lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, mn.AccountID, mn.ProjectID, string(tag.Key), nil, TimeRange{}, 1e5, 1e9, noDeadline)
 			if err != nil {
 				return fmt.Errorf("error in SearchLabelValuesWithFiltersOnTimeRange(labelName=%q): %w", tag.Key, err)
 			}
 			if !hasValue(lvs, tag.Value) {
 				return fmt.Errorf("SearchLabelValuesWithFiltersOnTimeRange(labelName=%q): couldn't find %q; found %q", tag.Key, tag.Value, lvs)
 			}
-			allLabelNames[string(tag.Key)] = true
+			labelNames[string(tag.Key)] = true
 		}
 	}
 
 	// Test SearchLabelNamesWithFiltersOnTimeRange (empty filters, global time range)
-	lns, err := db.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, TimeRange{}, 1e5, 1e9, noDeadline)
-	if err != nil {
-		return fmt.Errorf("error in SearchLabelNamesWithFiltersOnTimeRange(empty filter, global time range): %w", err)
-	}
-	if !hasValue(lns, []byte("__name__")) {
-		return fmt.Errorf("cannot find __name__ in %q", lns)
-	}
-	for labelName := range allLabelNames {
-		if !hasValue(lns, []byte(labelName)) {
-			return fmt.Errorf("cannot find %q in %q", labelName, lns)
+	for k, labelNames := range allLabelNames {
+		lns, err := db.SearchLabelNamesWithFiltersOnTimeRange(nil, k.AccountID, k.ProjectID, nil, TimeRange{}, 1e5, 1e9, noDeadline)
+		if err != nil {
+			return fmt.Errorf("error in SearchLabelNamesWithFiltersOnTimeRange: %w", err)
 		}
+		if !hasValue(lns, []byte("__name__")) {
+			return fmt.Errorf("cannot find __name__ in %q", lns)
+		}
+		for labelName := range labelNames {
+			if !hasValue(lns, []byte(labelName)) {
+				return fmt.Errorf("cannot find %q in %q", labelName, lns)
+			}
+		}
+	}
+
+	// Test SearchTenants on global time range
+	tenantsGot, err := db.SearchTenants(nil, TimeRange{}, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchTenants: %w", err)
+	}
+	sort.Strings(tenantsGot)
+	if !reflect.DeepEqual(tenants, tenantsGot) {
+		return fmt.Errorf("unexpected tenants got when searching in global time range;\ngot\n%s\nwant\n%s", tenantsGot, tenants)
+	}
+
+	// Test SearchTenants on specific time range
+	tr := TimeRange{
+		MinTimestamp: currentTime - msecPerDay,
+		MaxTimestamp: currentTime + msecPerDay,
+	}
+	tenantsGot, err = db.SearchTenants(nil, tr, noDeadline)
+	if err != nil {
+		return fmt.Errorf("error in SearchTenants: %w", err)
+	}
+	sort.Strings(tenantsGot)
+	if !reflect.DeepEqual(tenants, tenantsGot) {
+		return fmt.Errorf("unexpected tenants got when searching in global time range;\ngot\n%s\nwant\n%s", tenantsGot, tenants)
 	}
 
 	// Check timerseriesCounters only for serial test.
 	// Concurrent test may create duplicate timeseries, so GetSeriesCount
 	// would return more timeseries than needed.
 	if !isConcurrent {
-		n, err := db.GetSeriesCount(noDeadline)
-		if err != nil {
-			return fmt.Errorf("unexpected error in GetSeriesCount(): %w", err)
-		}
-		if n != uint64(len(timeseriesCounters)) {
-			return fmt.Errorf("unexpected GetSeriesCount(); got %d; want %d", n, uint64(len(timeseriesCounters)))
+		for k, tc := range timeseriesCounters {
+			n, err := db.GetSeriesCount(k.AccountID, k.ProjectID, noDeadline)
+			if err != nil {
+				return fmt.Errorf("unexpected error in GetSeriesCount(%v): %w", k, err)
+			}
+			if n != uint64(len(tc)) {
+				return fmt.Errorf("unexpected GetSeriesCount(%v); got %d; want %d", k, n, uint64(len(tc)))
+			}
 		}
 	}
 
 	// Try tag filters.
-	tr := TimeRange{
+	tr = TimeRange{
 		MinTimestamp: currentTime - msecPerDay,
 		MaxTimestamp: currentTime + msecPerDay,
 	}
@@ -795,7 +871,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		tsid := &tsids[i]
 
 		// Search without regexps.
-		tfs := NewTagFilters()
+		tfs := NewTagFilters(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add(nil, mn.MetricGroup, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for MetricGroup: %w", err)
 		}
@@ -841,7 +917,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search for Graphite wildcard
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		n := bytes.IndexByte(mn.MetricGroup, '.')
 		if n < 0 {
 			return fmt.Errorf("cannot find dot in MetricGroup %q", mn.MetricGroup)
@@ -860,7 +936,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 
 		// Search with a filter matching empty tag (a single filter)
 		// See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/1601
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add(nil, mn.MetricGroup, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for MetricGroup: %w", err)
 		}
@@ -877,7 +953,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 
 		// Search with filters matching empty tags (multiple filters)
 		// See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/1601
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add(nil, mn.MetricGroup, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for MetricGroup: %w", err)
 		}
@@ -896,7 +972,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search with regexps.
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add(nil, mn.MetricGroup, false, true); err != nil {
 			return fmt.Errorf("cannot create regexp tag filter for MetricGroup: %w", err)
 		}
@@ -934,7 +1010,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search with filter matching zero results.
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add([]byte("non-existing-key"), []byte("foobar"), false, false); err != nil {
 			return fmt.Errorf("cannot add non-existing key: %w", err)
 		}
@@ -956,7 +1032,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search with empty filter. It should match all the results.
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		tsidsFound, err = searchTSIDsInTest(db, []*TagFilters{tfs}, tr)
 		if err != nil {
 			return fmt.Errorf("cannot search for common prefix: %w", err)
@@ -966,7 +1042,7 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search with empty metricGroup. It should match zero results.
-		tfs.Reset()
+		tfs.Reset(mn.AccountID, mn.ProjectID)
 		if err := tfs.Add(nil, nil, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for empty metricGroup: %w", err)
 		}
@@ -979,11 +1055,11 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 		}
 
 		// Search with multiple tfss
-		tfs1 := NewTagFilters()
+		tfs1 := NewTagFilters(mn.AccountID, mn.ProjectID)
 		if err := tfs1.Add(nil, nil, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for empty metricGroup: %w", err)
 		}
-		tfs2 := NewTagFilters()
+		tfs2 := NewTagFilters(mn.AccountID, mn.ProjectID)
 		if err := tfs2.Add(nil, mn.MetricGroup, false, false); err != nil {
 			return fmt.Errorf("cannot create tag filter for MetricGroup: %w", err)
 		}
@@ -1001,19 +1077,27 @@ func testIndexDBCheckTSIDByName(db *indexDB, mns []MetricName, tsids []TSID, isC
 			return fmt.Errorf("cannot search for nil tfss: %w", err)
 		}
 		if len(tsidsFound) != 0 {
-			return fmt.Errorf("unexpected non-empty tsids fround for nil tfss; found %d tsids", len(tsidsFound))
+			return fmt.Errorf("unexpected non-empty tsids fround for nil tfss")
 		}
 	}
 
 	return nil
 }
 
-func searchTSIDsInTest(db *indexDB, tfs []*TagFilters, tr TimeRange) ([]TSID, error) {
-	metricIDs, err := db.searchMetricIDs(nil, tfs, tr, 1e5, noDeadline)
+func searchTSIDsInTest(db *indexDB, tfss []*TagFilters, tr TimeRange) ([]TSID, error) {
+	metricIDs, err := db.searchMetricIDs(nil, tfss, tr, 1e5, noDeadline)
 	if err != nil {
 		return nil, err
 	}
-	return db.getTSIDsFromMetricIDs(nil, metricIDs, noDeadline)
+	if len(tfss) == 0 {
+		if len(metricIDs) > 0 {
+			return nil, fmt.Errorf("expecting empty metricIDs for non-empty tfss; got %d metricIDs", len(metricIDs))
+		}
+		return nil, nil
+	}
+	accountID := tfss[0].accountID
+	projectID := tfss[0].projectID
+	return db.getTSIDsFromMetricIDs(nil, accountID, projectID, metricIDs, noDeadline)
 }
 
 func testHasTSID(tsids []TSID, tsid *TSID) bool {
@@ -1027,6 +1111,8 @@ func testHasTSID(tsids []TSID, tsid *TSID) bool {
 
 func TestMatchTagFilters(t *testing.T) {
 	var mn MetricName
+	mn.AccountID = 123
+	mn.ProjectID = 456
 	mn.MetricGroup = append(mn.MetricGroup, "foobar_metric"...)
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("key %d", i)
@@ -1035,12 +1121,36 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 	var bb bytesutil.ByteBuffer
 
-	var tfs TagFilters
-	tfs.Reset()
+	// Verify tag filters for different account / project
+	tfs := NewTagFilters(mn.AccountID, mn.ProjectID+1)
 	if err := tfs.Add(nil, []byte("foobar_metric"), false, false); err != nil {
 		t.Fatalf("cannot add filter: %s", err)
 	}
 	ok, err := matchTagFilters(&mn, toTFPointers(tfs.tfs), &bb)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if ok {
+		t.Fatalf("Tag filters shouldn't match for invalid projectID")
+	}
+	tfs.Reset(mn.AccountID+1, mn.ProjectID)
+	if err := tfs.Add(nil, []byte("foobar_metric"), false, false); err != nil {
+		t.Fatalf("cannot add filter: %s", err)
+	}
+	ok, err = matchTagFilters(&mn, toTFPointers(tfs.tfs), &bb)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if ok {
+		t.Fatalf("Tag filters shouldn't match for invalid accountID")
+	}
+
+	// Correct AccountID , ProjectID
+	tfs.Reset(mn.AccountID, mn.ProjectID)
+	if err := tfs.Add(nil, []byte("foobar_metric"), false, false); err != nil {
+		t.Fatalf("cannot add filter: %s", err)
+	}
+	ok, err = matchTagFilters(&mn, toTFPointers(tfs.tfs), &bb)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
@@ -1049,7 +1159,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Empty tag filters should match.
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	ok, err = matchTagFilters(&mn, toTFPointers(tfs.tfs), &bb)
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
@@ -1059,7 +1169,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Negative match by MetricGroup
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foobar"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1070,7 +1180,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("obar.+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, no negative filter: %s", err)
 	}
@@ -1081,7 +1191,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foobar_metric"), true, false); err != nil {
 		t.Fatalf("cannot add no regexp, negative filter: %s", err)
 	}
@@ -1092,7 +1202,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foob.+metric"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1103,7 +1213,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte(".+"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1116,7 +1226,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Positive match by MetricGroup
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foobar_metric"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1127,7 +1237,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foobar.+etric"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, no negative filter: %s", err)
 	}
@@ -1138,7 +1248,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("obar_metric"), true, false); err != nil {
 		t.Fatalf("cannot add no regexp, negative filter: %s", err)
 	}
@@ -1149,7 +1259,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("ob.+metric"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1160,7 +1270,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte(".+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, positive filter: %s", err)
 	}
@@ -1173,7 +1283,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Positive empty match by non-existing tag
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte("foobar|"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, positive filter: %s", err)
 	}
@@ -1186,7 +1296,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Negative match by non-existing tag
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte("foobar"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1197,7 +1307,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte("obar.+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, no negative filter: %s", err)
 	}
@@ -1208,7 +1318,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte("foobar_metric"), true, false); err != nil {
 		t.Fatalf("cannot add no regexp, negative filter: %s", err)
 	}
@@ -1219,7 +1329,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte("foob.+metric"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1230,7 +1340,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte(".+"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1241,7 +1351,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("non-existing-tag"), []byte(".+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, non-negative filter: %s", err)
 	}
@@ -1254,7 +1364,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Negative match by existing tag
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 0"), []byte("foobar"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1265,7 +1375,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 1"), []byte("obar.+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, no negative filter: %s", err)
 	}
@@ -1276,7 +1386,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 2"), []byte("value 2"), true, false); err != nil {
 		t.Fatalf("cannot add no regexp, negative filter: %s", err)
 	}
@@ -1287,7 +1397,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte("v.+lue 3"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1298,7 +1408,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte(".+"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1311,7 +1421,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// See https://github.com/VictoriaMetrics/VictoriaMetrics/issues/546
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte("|value 3"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1322,7 +1432,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if ok {
 		t.Fatalf("Shouldn't match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte("|value 2"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1335,7 +1445,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Positive match by existing tag
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 0"), []byte("value 0"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1346,7 +1456,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 1"), []byte(".+lue 1"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, no negative filter: %s", err)
 	}
@@ -1357,7 +1467,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 2"), []byte("value 3"), true, false); err != nil {
 		t.Fatalf("cannot add no regexp, negative filter: %s", err)
 	}
@@ -1368,7 +1478,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte("v.+lue 2|"), true, true); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1379,7 +1489,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte(""), true, false); err != nil {
 		t.Fatalf("cannot add regexp, negative filter: %s", err)
 	}
@@ -1390,7 +1500,7 @@ func TestMatchTagFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("Should match")
 	}
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 3"), []byte(".+"), false, true); err != nil {
 		t.Fatalf("cannot add regexp, non-negative filter: %s", err)
 	}
@@ -1403,7 +1513,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Positive match by multiple tags and MetricGroup
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add([]byte("key 0"), []byte("value 0"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
 	}
@@ -1437,7 +1547,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Negative match by multiple tags and MetricGroup
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	// Positive matches
 	if err := tfs.Add([]byte("key 0"), []byte("value 0"), false, false); err != nil {
 		t.Fatalf("cannot add no regexp, no negative filter: %s", err)
@@ -1474,7 +1584,7 @@ func TestMatchTagFilters(t *testing.T) {
 	}
 
 	// Negative match for multiple non-regexp positive filters
-	tfs.Reset()
+	tfs.Reset(mn.AccountID, mn.ProjectID)
 	if err := tfs.Add(nil, []byte("foobar_metric"), false, false); err != nil {
 		t.Fatalf("cannot add non-regexp positive filter for MetricGroup: %s", err)
 	}
@@ -1601,10 +1711,11 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 		}
 	}()
 
-	is := db.getIndexSearch(noDeadline)
-	defer db.putIndexSearch(is)
-
 	// Create a bunch of per-day time series
+	const accountID = 12345
+	const projectID = 85453
+	is := db.getIndexSearch(accountID, projectID, noDeadline)
+	defer db.putIndexSearch(is)
 	const days = 5
 	const metricsPerDay = 1000
 	theDay := time.Date(2019, time.October, 15, 5, 1, 0, 0, time.UTC)
@@ -1626,6 +1737,8 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 		var mns []MetricName
 		for metric := 0; metric < metricsPerDay; metric++ {
 			var mn MetricName
+			mn.AccountID = accountID
+			mn.ProjectID = projectID
 			mn.MetricGroup = []byte("testMetric")
 			mn.AddTag(
 				"constant",
@@ -1651,6 +1764,12 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 			if err := is.GetOrCreateTSIDByName(&genTSID, metricNameBuf, metricNameRawBuf, 0); err != nil {
 				t.Fatalf("unexpected error when creating tsid for mn:\n%s: %s", &mn, err)
 			}
+			if genTSID.TSID.AccountID != accountID {
+				t.Fatalf("unexpected accountID; got %d; want %d", genTSID.TSID.AccountID, accountID)
+			}
+			if genTSID.TSID.ProjectID != projectID {
+				t.Fatalf("unexpected accountID; got %d; want %d", genTSID.TSID.ProjectID, projectID)
+			}
 			mns = append(mns, mn)
 			tsids = append(tsids, genTSID.TSID)
 		}
@@ -1670,7 +1789,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	// Flush index to disk, so it becomes visible for search
 	db.tb.DebugFlush()
 
-	is2 := db.getIndexSearch(noDeadline)
+	is2 := db.getIndexSearch(accountID, projectID, noDeadline)
 	defer db.putIndexSearch(is2)
 
 	// Check that all the metrics are found for all the days.
@@ -1698,7 +1817,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 		MinTimestamp: int64(now) - msecPerDay,
 		MaxTimestamp: int64(now),
 	}
-	lns, err := db.SearchLabelNamesWithFiltersOnTimeRange(nil, nil, tr, 10000, 1e9, noDeadline)
+	lns, err := db.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, nil, tr, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelNamesWithFiltersOnTimeRange(timeRange=%s): %s", &tr, err)
 	}
@@ -1708,7 +1827,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check SearchLabelValuesWithFiltersOnTimeRange with the specified time range.
-	lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, "", nil, tr, 10000, 1e9, noDeadline)
+	lvs, err := db.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, "", nil, tr, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelValuesWithFiltersOnTimeRange(timeRange=%s): %s", &tr, err)
 	}
@@ -1718,7 +1837,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Create a filter that will match series that occur across multiple days
-	tfs := NewTagFilters()
+	tfs := NewTagFilters(accountID, projectID)
 	if err := tfs.Add([]byte("constant"), []byte("const"), false, false); err != nil {
 		t.Fatalf("cannot add filter: %s", err)
 	}
@@ -1738,7 +1857,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check SearchLabelNamesWithFiltersOnTimeRange with the specified filter.
-	lns, err = db.SearchLabelNamesWithFiltersOnTimeRange(nil, []*TagFilters{tfs}, TimeRange{}, 10000, 1e9, noDeadline)
+	lns, err = db.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, []*TagFilters{tfs}, TimeRange{}, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelNamesWithFiltersOnTimeRange(filters=%s): %s", tfs, err)
 	}
@@ -1748,7 +1867,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check SearchLabelNamesWithFiltersOnTimeRange with the specified filter and time range.
-	lns, err = db.SearchLabelNamesWithFiltersOnTimeRange(nil, []*TagFilters{tfs}, tr, 10000, 1e9, noDeadline)
+	lns, err = db.SearchLabelNamesWithFiltersOnTimeRange(nil, accountID, projectID, []*TagFilters{tfs}, tr, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelNamesWithFiltersOnTimeRange(filters=%s, timeRange=%s): %s", tfs, &tr, err)
 	}
@@ -1758,7 +1877,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check SearchLabelValuesWithFiltersOnTimeRange with the specified filter.
-	lvs, err = db.SearchLabelValuesWithFiltersOnTimeRange(nil, "", []*TagFilters{tfs}, TimeRange{}, 10000, 1e9, noDeadline)
+	lvs, err = db.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, "", []*TagFilters{tfs}, TimeRange{}, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelValuesWithFiltersOnTimeRange(filters=%s): %s", tfs, err)
 	}
@@ -1768,7 +1887,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check SearchLabelValuesWithFiltersOnTimeRange with the specified filter and time range.
-	lvs, err = db.SearchLabelValuesWithFiltersOnTimeRange(nil, "", []*TagFilters{tfs}, tr, 10000, 1e9, noDeadline)
+	lvs, err = db.SearchLabelValuesWithFiltersOnTimeRange(nil, accountID, projectID, "", []*TagFilters{tfs}, tr, 10000, 1e9, noDeadline)
 	if err != nil {
 		t.Fatalf("unexpected error in SearchLabelValuesWithFiltersOnTimeRange(filters=%s, timeRange=%s): %s", tfs, &tr, err)
 	}
@@ -1792,7 +1911,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check GetTSDBStatus with nil filters.
-	status, err := db.GetTSDBStatus(nil, nil, baseDate, "day", 5, 1e6, noDeadline)
+	status, err := db.GetTSDBStatus(nil, accountID, projectID, nil, baseDate, "day", 5, 1e6, noDeadline)
 	if err != nil {
 		t.Fatalf("error in GetTSDBStatus with nil filters: %s", err)
 	}
@@ -1902,11 +2021,11 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check GetTSDBStatus with non-nil filter, which matches all the series
-	tfs = NewTagFilters()
+	tfs = NewTagFilters(accountID, projectID)
 	if err := tfs.Add([]byte("day"), []byte("0"), false, false); err != nil {
 		t.Fatalf("cannot add filter: %s", err)
 	}
-	status, err = db.GetTSDBStatus(nil, []*TagFilters{tfs}, baseDate, "", 5, 1e6, noDeadline)
+	status, err = db.GetTSDBStatus(nil, accountID, projectID, []*TagFilters{tfs}, baseDate, "", 5, 1e6, noDeadline)
 	if err != nil {
 		t.Fatalf("error in GetTSDBStatus: %s", err)
 	}
@@ -1931,8 +2050,8 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 		t.Fatalf("unexpected TotalLabelValuePairs; got %d; want %d", status.TotalLabelValuePairs, expectedLabelValuePairs)
 	}
 
-	// Check GetTSDBStatus, which matches all the series on a global time range
-	status, err = db.GetTSDBStatus(nil, nil, 0, "day", 5, 1e6, noDeadline)
+	// Check GetTSDBStatus with non-nil filter, which matches all the series on a global time range
+	status, err = db.GetTSDBStatus(nil, accountID, projectID, nil, 0, "day", 5, 1e6, noDeadline)
 	if err != nil {
 		t.Fatalf("error in GetTSDBStatus: %s", err)
 	}
@@ -1983,11 +2102,11 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check GetTSDBStatus with non-nil filter, which matches only 3 series
-	tfs = NewTagFilters()
+	tfs = NewTagFilters(accountID, projectID)
 	if err := tfs.Add([]byte("UniqueId"), []byte("0|1|3"), false, true); err != nil {
 		t.Fatalf("cannot add filter: %s", err)
 	}
-	status, err = db.GetTSDBStatus(nil, []*TagFilters{tfs}, baseDate, "", 5, 1e6, noDeadline)
+	status, err = db.GetTSDBStatus(nil, accountID, projectID, []*TagFilters{tfs}, baseDate, "", 5, 1e6, noDeadline)
 	if err != nil {
 		t.Fatalf("error in GetTSDBStatus: %s", err)
 	}
@@ -2013,7 +2132,7 @@ func TestSearchTSIDWithTimeRange(t *testing.T) {
 	}
 
 	// Check GetTSDBStatus with non-nil filter on global time range, which matches only 15 series
-	status, err = db.GetTSDBStatus(nil, []*TagFilters{tfs}, 0, "", 5, 1e6, noDeadline)
+	status, err = db.GetTSDBStatus(nil, accountID, projectID, []*TagFilters{tfs}, 0, "", 5, 1e6, noDeadline)
 	if err != nil {
 		t.Fatalf("error in GetTSDBStatus: %s", err)
 	}

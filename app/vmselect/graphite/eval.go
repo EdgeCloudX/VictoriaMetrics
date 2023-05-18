@@ -8,6 +8,7 @@ import (
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/graphiteql"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/netstorage"
 	"github.com/VictoriaMetrics/VictoriaMetrics/app/vmselect/searchutils"
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/cgroup"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/logger"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
@@ -18,6 +19,7 @@ var maxGraphiteSeries = flag.Int("search.maxGraphiteSeries", 300e3, "The maximum
 	"See https://docs.victoriametrics.com/#graphite-render-api-usage")
 
 type evalConfig struct {
+	at          *auth.Token
 	startTime   int64
 	endTime     int64
 	storageStep int64
@@ -148,12 +150,13 @@ func evalMetricExpr(ec *evalConfig, me *graphiteql.MetricExpr) (nextSeriesFunc, 
 		Value: []byte(me.Query),
 	}}
 	tfss := joinTagFilterss(tfs, ec.etfs)
-	sq := storage.NewSearchQuery(ec.startTime, ec.endTime, tfss, *maxGraphiteSeries)
+	sq := storage.NewSearchQuery(ec.at.AccountID, ec.at.ProjectID, ec.startTime, ec.endTime, tfss, *maxGraphiteSeries)
 	return newNextSeriesForSearchQuery(ec, sq, me)
 }
 
 func newNextSeriesForSearchQuery(ec *evalConfig, sq *storage.SearchQuery, expr graphiteql.Expr) (nextSeriesFunc, error) {
-	rss, err := netstorage.ProcessSearchQuery(nil, sq, ec.deadline)
+	denyPartialResponse := true
+	rss, _, err := netstorage.ProcessSearchQuery(nil, denyPartialResponse, sq, ec.deadline)
 	if err != nil {
 		return nil, fmt.Errorf("cannot fetch data for %q: %w", sq, err)
 	}

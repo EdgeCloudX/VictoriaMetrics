@@ -172,7 +172,7 @@ func unmarshalTimeseriesFast(src []byte) ([]*timeseries, error) {
 
 // marshaledFastMetricNameSize returns the size of marshaled mn returned from marshalMetricNameFast.
 func marshaledFastMetricNameSize(mn *storage.MetricName) int {
-	n := 0
+	n := 8 // AccountID, ProjectID
 	n += 2 + len(mn.MetricGroup)
 	n += 2 // Length of tags.
 	for i := range mn.Tags {
@@ -220,6 +220,8 @@ func unmarshalTimestampsFast(src []byte, timestampsLen uint64) ([]byte, []int64,
 //
 // The result must be unmarshaled with unmarshalMetricNameFast.
 func marshalMetricNameFast(dst []byte, mn *storage.MetricName) []byte {
+	dst = encoding.MarshalUint32(dst, mn.AccountID)
+	dst = encoding.MarshalUint32(dst, mn.ProjectID)
 	dst = marshalBytesFast(dst, mn.MetricGroup)
 	dst = encoding.MarshalUint16(dst, uint16(len(mn.Tags)))
 	// There is no need in tags' sorting - they must be sorted after unmarshaling.
@@ -231,6 +233,13 @@ func marshalMetricNameFast(dst []byte, mn *storage.MetricName) []byte {
 // It is unsafe modifying src while mn is in use.
 func unmarshalMetricNameFast(mn *storage.MetricName, src []byte) ([]byte, error) {
 	mn.Reset()
+
+	if len(src) < 8 {
+		return src, fmt.Errorf("cannot unmarshal AccountID, ProjectID from %d bytes; need at least 8 bytes", len(src))
+	}
+	mn.AccountID = encoding.UnmarshalUint32(src)
+	mn.ProjectID = encoding.UnmarshalUint32(src[4:])
+	src = src[8:]
 
 	tail, metricGroup, err := unmarshalBytesFast(src)
 	if err != nil {
@@ -278,6 +287,7 @@ func marshalMetricTagsFast(dst []byte, tags []storage.Tag) []byte {
 }
 
 func marshalMetricNameSorted(dst []byte, mn *storage.MetricName) []byte {
+	// Do not marshal AccountID and ProjectID, since they are unused.
 	dst = marshalBytesFast(dst, mn.MetricGroup)
 	return marshalMetricTagsSorted(dst, mn)
 }

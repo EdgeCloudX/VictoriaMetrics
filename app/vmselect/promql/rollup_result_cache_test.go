@@ -3,6 +3,7 @@ package promql
 import (
 	"testing"
 
+	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/fs"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
 	"github.com/VictoriaMetrics/metricsql"
@@ -37,6 +38,11 @@ func TestRollupResultCache(t *testing.T) {
 		End:                2000,
 		Step:               200,
 		MaxPointsPerSeries: 1e4,
+
+		AuthToken: &auth.Token{
+			AccountID: 333,
+			ProjectID: 843,
+		},
 
 		MayCache: true,
 	}
