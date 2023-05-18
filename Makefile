@@ -1,4 +1,4 @@
-PKG_PREFIX := github.com/VictoriaMetrics/VictoriaMetrics
+PKG_PREFIX := github.com/EdgeCloudX/VictoriaMetrics
 
 DATEINFO_TAG ?= $(shell date -u +'%Y%m%d-%H%M%S')
 BUILDINFO_TAG ?= $(shell echo $$(git describe --long --all | tr '/' '-')$$( \

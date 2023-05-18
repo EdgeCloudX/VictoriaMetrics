@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -14,11 +15,12 @@ func NewIPQPSLimiter() *IPQPSLimiter {
 }
 
 type ClientQPSLimiter struct {
-	counter     int           // 当前请求数
-	maxQPS      int           // 最大QPS限制
-	windowSize  time.Duration // 窗口时间大小
-	lock        sync.Mutex    // 互斥锁，用于保护计数器的并发访问
-	resetTicker *time.Ticker  // 定时器，用于重置计数器
+	counter      int           // 当前请求数
+	maxQPS       int           // 最大QPS限制
+	windowSize   time.Duration // 窗口时间大小
+	lock         sync.Mutex    // 互斥锁，用于保护计数器的并发访问
+	resetTicker  *time.Ticker  // 定时器，用于重置计数器
+	deleteTicker *time.Ticker  // 定时查看当前请求数是否为0
 }
 
 func NewClientQPSLimiter(maxQPS int, windowSize time.Duration) *ClientQPSLimiter {
@@ -53,5 +55,17 @@ func (limiter *IPQPSLimiter) Allow(ip string, maxQPS int, windowSize time.Durati
 	limiterObj, _ := limiter.limiterMap.LoadOrStore(ip, NewClientQPSLimiter(maxQPS, windowSize))
 	clientLimiter := limiterObj.(*ClientQPSLimiter)
 	clientLimiter.Start()
+
 	return clientLimiter.Allow()
+}
+func (limiter *IPQPSLimiter) DeleteMap(ip string, clientLimiter *ClientQPSLimiter) {
+	go func() {
+		for range clientLimiter.deleteTicker.C {
+			if clientLimiter.counter == 0 {
+				limiter.limiterMap.Delete(ip)
+				fmt.Printf("delete key is :%s\n", ip)
+				clientLimiter.deleteTicker.Stop()
+			}
+		}
+	}()
 }
